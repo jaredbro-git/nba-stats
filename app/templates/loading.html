@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="5">
+  <title>NBA</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
+</head>
+<body>
+  <main class="page">
+    <h1>NBA</h1>
+    <section class="card loading">
+      {% if status.running %}
+      <h2>Downloading NBA data for the first time</h2>
+      <p>{{ status.done }} of {{ status.total or "…" }} requests done. stats.nba.com limits how fast requests can be made, so this takes a couple of minutes. The page reloads by itself.</p>
+      <div class="progress"><span style="width: {{ (100 * status.done / status.total) if status.total else 0 }}%"></span></div>
+      {% elif status.error %}
+      <h2>The download failed</h2>
+      <p class="bad">{{ status.error }}</p>
+      <p>It will retry in a few minutes, or <form method="post" action="/refresh" style="display:inline"><button type="submit">try again now</button></form></p>
+      {% else %}
+      <h2>Starting the download…</h2>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

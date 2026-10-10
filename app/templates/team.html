@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ team.full_name }} · NBA{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Teams</a> / {{ team.full_name }}</nav>
+
+<header class="team-head">
+  <img src="{{ logo(team.id) }}" alt="" class="logo-lg">
+  <div>
+    <h1>{{ team.full_name }}</h1>
+    <p class="muted">{{ team.conference }}ern Conference{% if record %} · {{ record }} {% if record_season != lg.cur %}last season{% else %}this season{% endif %}{% endif %}</p>
+  </div>
+</header>
+
+<div class="tiles">
+  <div class="tile"><span class="tile-label">Offence (pts per 100 poss.)</span><span class="tile-value">{{ "%.1f"|format(rating.off) }}</span><span class="tile-sub">#{{ rating.off_rank }} in the league</span></div>
+  <div class="tile"><span class="tile-label">Defence (allowed per 100)</span><span class="tile-value">{{ "%.1f"|format(rating.def) }}</span><span class="tile-sub">#{{ rating.def_rank }} in the league</span></div>
+  <div class="tile"><span class="tile-label">Net rating</span><span class="tile-value {{ 'good' if rating.net > 0 else 'bad' }}">{{ rating.net|signed }}</span><span class="tile-sub">#{{ rating.net_rank }} in the league</span></div>
+  <div class="tile"><span class="tile-label">Pace (possessions per 48)</span><span class="tile-value">{{ "%.1f"|format(rating.pace) }}</span><span class="tile-sub">#{{ rating.pace_rank }} fastest</span></div>
+</div>
+<p class="muted small-print">Projected for the current roster, blending last season (regressed toward average) with this season's games so far.</p>
+
+<div class="grid team-grid">
+  <section class="card">
+    <div class="section-head">
+      <h2>Schedule</h2>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected="true" data-tab="upcoming">Upcoming ({{ upcoming|length }})</button>
+        <button type="button" role="tab" aria-selected="false" data-tab="results">Results ({{ results|length }})</button>
+      </div>
+    </div>
+    <div class="tab-panel" id="tab-upcoming">
+      {% if upcoming %}
+      <div class="table-wrap">
+      <table class="schedule">
+        <thead><tr><th>Date (NZ)</th><th>Opponent</th><th class="num">Win chance</th><th class="num">Expected score</th></tr></thead>
+        <tbody>
+        {% for g in upcoming %}
+        <tr class="clickable" data-href="/game/{{ g.game_id }}">
+          <td>{{ g.start.strftime("%a %-d %b") }}<br><small class="muted">{{ g.start.strftime("%-I:%M %p") }}{% if g.live %} · <b class="warn">Live</b>{% endif %}</small></td>
+          <td>
+            <a href="/game/{{ g.game_id }}" class="opp">{{ "vs" if g.home else "@" }} <img src="{{ logo(g.opp.id) }}" alt="" class="logo-sm" loading="lazy"> {{ g.opp.nickname }}</a>
+            {% if g.label %}<br><small class="muted">{{ g.label }}</small>{% endif %}
+            {% if g.b2b %}<br><small class="warn">Back-to-back</small>{% endif %}
+          </td>
+          <td class="num"><span class="winbar" style="--w: {{ (100 * g.win)|round(1) }}%"></span> <b class="{{ 'good' if g.win >= 0.5 else 'bad' }}">{{ g.win|pct }}</b></td>
+          <td class="num">{{ g.pts|round|int }}–{{ g.opp_pts|round|int }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}<p class="muted">No games left on the schedule.</p>{% endif %}
+    </div>
+    <div class="tab-panel" id="tab-results" hidden>
+      {% if results %}
+      <div class="table-wrap">
+      <table class="schedule">
+        <thead><tr><th>Date (NZ)</th><th>Opponent</th><th class="num">Result</th></tr></thead>
+        <tbody>
+        {% for g in results %}
+        <tr class="clickable" data-href="/game/{{ g.game_id }}">
+          <td>{{ g.start.strftime("%a %-d %b") }}</td>
+          <td><a href="/game/{{ g.game_id }}" class="opp">{{ "vs" if g.home else "@" }} <img src="{{ logo(g.opp.id) }}" alt="" class="logo-sm" loading="lazy"> {{ g.opp.nickname }}</a></td>
+          <td class="num"><b class="{{ 'good' if g.won else 'bad' }}">{{ "W" if g.won else "L" }}</b> {{ g.pts }}–{{ g.opp_pts }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}<p class="muted">No games played yet this season.</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Roster</h2>
+    <p class="muted small-print">Per-game stats are from this season once played, otherwise last season. Impact is the estimated change in net rating per 100 possessions with the player on court.
+      Mark a player unavailable to take him out of every prediction until you mark him available again.</p>
+    <div class="table-wrap">
+    <table class="roster">
+      <thead><tr><th>Player</th><th class="num">Exp. min</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">Impact</th><th></th></tr></thead>
+      <tbody>
+      {% for p in roster %}
+      {% set season = lg.cur if p.per_game.get(lg.cur) else lg.prev %}
+      {% set pg = p.per_game.get(season) %}
+      {% set is_out = p.id in saved_out %}
+      <tr class="{{ 'is-out' if is_out }}">
+        <td><a href="/player/{{ p.id }}">{{ p.name }}</a><br><small class="muted">{{ p.position or "–" }}{% if p.number %} · #{{ p.number }}{% endif %}{% if not pg %} · no NBA stats yet{% elif season != lg.cur %} · {{ season }}{% endif %}</small></td>
+        <td class="num">{% if minutes.get(p.id) %}{{ minutes[p.id]|round|int }}{% else %}–{% endif %}</td>
+        <td class="num">{{ "%.1f"|format(pg.PTS) if pg else "–" }}</td>
+        <td class="num">{{ "%.1f"|format(pg.REB) if pg else "–" }}</td>
+        <td class="num">{{ "%.1f"|format(pg.AST) if pg else "–" }}</td>
+        <td class="num {{ 'good' if p.impact > 0.5 else 'bad' if p.impact < -0.5 }}">{{ p.impact|signed }}</td>
+        <td>
+          <form method="post" action="/unavailable">
+            <input type="hidden" name="player_id" value="{{ p.id }}">
+            <input type="hidden" name="out" value="{{ 'false' if is_out else 'true' }}">
+            <input type="hidden" name="back" value="/team/{{ team.abbreviation }}">
+            <button type="submit" class="secondary small" aria-pressed="{{ 'true' if is_out else 'false' }}">{{ "Out" if is_out else "Mark out" }}</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/app.js?v={{ asset_version }}"></script>{% endblock %}

@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+nba_api
+pandas
+jinja2
+tzdata
+python-multipart

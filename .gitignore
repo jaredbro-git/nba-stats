@@ -1,0 +1,19 @@
+# Downloaded NBA data and your saved list of unavailable players
+data/
+.env
+.env.*
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store

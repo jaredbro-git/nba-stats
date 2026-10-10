@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}{{ info.DISPLAY_FIRST_LAST or "Player" }} · NBA{% endblock %}
+{% block head %}<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Teams</a>{% if team %} / <a href="/team/{{ team.abbreviation }}">{{ team.full_name }}</a>{% endif %} / {{ info.DISPLAY_FIRST_LAST }}</nav>
+
+<header class="player-head">
+  <img src="{{ headshot(info.PERSON_ID) }}" alt="" class="headshot" onerror="this.style.visibility='hidden'">
+  <div>
+    <h1>{{ info.DISPLAY_FIRST_LAST }}</h1>
+    <p class="muted">
+      {% if team %}<a href="/team/{{ team.abbreviation }}" class="team-inline"><img src="{{ logo(team.id) }}" alt="" class="logo-sm">{{ team.full_name }}</a>{% else %}Not on an NBA roster{% endif %}
+      {% if info.JERSEY %} · #{{ info.JERSEY }}{% endif %}{% if info.POSITION %} · {{ info.POSITION }}{% endif %}
+    </p>
+    <dl class="facts">
+      {% if age %}<div><dt>Age</dt><dd>{{ age }}</dd></div>{% endif %}
+      {% if info.HEIGHT %}<div><dt>Height</dt><dd>{{ height(info.HEIGHT) }}</dd></div>{% endif %}
+      {% if info.WEIGHT %}<div><dt>Weight</dt><dd>{{ info.WEIGHT }} lb ({{ (info.WEIGHT|int * 0.4536)|round|int }} kg)</dd></div>{% endif %}
+      {% if info.COUNTRY %}<div><dt>Country</dt><dd>{{ info.COUNTRY }}</dd></div>{% endif %}
+      {% if info.SCHOOL %}<div><dt>Before the NBA</dt><dd>{{ info.SCHOOL }}</dd></div>{% endif %}
+      <div><dt>Draft</dt><dd>{% if info.DRAFT_YEAR and info.DRAFT_YEAR != "Undrafted" %}{{ info.DRAFT_YEAR }}, round {{ info.DRAFT_ROUND }}, pick {{ info.DRAFT_NUMBER }}{% else %}Undrafted{% endif %}</dd></div>
+      <div><dt>Experience</dt><dd>{% if info.SEASON_EXP %}{{ info.SEASON_EXP }} season{{ "s" if info.SEASON_EXP != 1 }}{% else %}Rookie{% endif %}</dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="grid">
+  <section class="card">
+    <h2>Playstyle{% if style_season %} <small class="muted">· {{ style_season }}</small>{% endif %}</h2>
+    {% if summary %}
+    <p class="summary">{{ summary }}</p>
+    {% if traits %}
+    <ul class="traits">
+      {% for t in traits %}<li><b>{{ t.label }}</b><span class="muted">{{ t.detail }}</span></li>{% endfor %}
+    </ul>
+    {% endif %}
+    <p class="muted small-print">Built from where he ranks among players with 500+ minutes that season.</p>
+    {% else %}
+    <p class="muted">No NBA games in the last two seasons, so there's nothing to describe yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Shot locations{% if style_season %} <small class="muted">· {{ style_season }}</small>{% endif %}</h2>
+    {% if zones %}
+    <ul class="zone-bars">
+      {% for z in zones %}
+      <li>
+        <span class="zone-name">{{ z.label }}</span>
+        <span class="zone-bar" title="{{ z.fga|int }} shots, {{ z.share|pct(1) }} of his attempts"><span style="width: {{ 100 * z.share }}%"></span></span>
+        <span class="num">{{ z.share|pct }}</span>
+        <span class="num zone-pct {{ 'good' if z.pct and z.pct > z.league_pct + 0.02 else 'bad' if z.pct is not none and z.fga >= 20 and z.pct < z.league_pct - 0.02 }}">{{ z.pct|pct if z.fga else "–" }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted small-print">Bar: share of his shots from each zone. Right column: his field goal % there, green or red when 2+ points above or below the league average.</p>
+    {% else %}<p class="muted">No shot data.</p>{% endif %}
+  </section>
+
+  {% if player %}
+  <section class="card">
+    <h2>Impact</h2>
+    <div class="tiles compact">
+      <div class="tile"><span class="tile-label">Offence</span><span class="tile-value {{ 'good' if player.impact_off > 0.5 else 'bad' if player.impact_off < -0.5 }}">{{ player.impact_off|signed }}</span></div>
+      <div class="tile"><span class="tile-label">Defence</span><span class="tile-value {{ 'good' if player.impact_def > 0.5 else 'bad' if player.impact_def < -0.5 }}">{{ player.impact_def|signed }}</span></div>
+      <div class="tile"><span class="tile-label">Usual minutes</span><span class="tile-value">{{ player.mpg|round|int }}</span></div>
+    </div>
+    <p class="muted small-print">Estimated points per 100 possessions his team gains with him on court rather than off,
+      from on/off splits shrunk toward zero for small samples (last season at 60% weight).</p>
+    {% if evidence %}
+    <ul class="evidence">
+      {% for s in evidence %}
+      <li>{{ s.season }}: {{ team.nickname }} went {% if s.with %}{{ s.with.w }}–{{ s.with.l }} with him (net {{ s.with.net|signed }}){% endif %}{% if s.without %} and {{ s.without.w }}–{{ s.without.l }} without him (net {{ s.without.net|signed }}){% else %}, and he didn't miss a game{% endif %}.</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>Teams</h2>
+    {% if teams %}
+    <ol class="team-history">
+      {% for t in teams %}
+      <li><img src="{{ logo(t.team_id) }}" alt="" class="logo-sm"> <b>{{ t.abbr }}</b> <span class="muted">{{ t.from }}{% if t.to != t.from %} to {{ t.to }}{% endif %} · {{ t.gp }} games</span></li>
+      {% endfor %}
+    </ol>
+    {% else %}<p class="muted">No NBA regular-season games yet.</p>{% endif %}
+  </section>
+</div>
+
+{% if regular|length > 1 %}
+<section class="card">
+  <h2>Career per game</h2>
+  <div class="chart"><canvas id="career-chart" aria-label="Points, rebounds and assists per game by season"></canvas></div>
+  <div class="line-legend">
+    <span><i class="swatch" style="background: var(--series-1)"></i>Points</span>
+    <span><i class="swatch" style="background: var(--series-2)"></i>Rebounds</span>
+    <span><i class="swatch" style="background: var(--series-3)"></i>Assists</span>
+  </div>
+</section>
+{% endif %}
+
+{% if regular %}
+<section class="card">
+  <h2>Regular season</h2>
+  <div class="table-wrap">
+  <table class="career">
+    <thead><tr><th>Season</th><th>Team</th><th class="num">Age</th><th class="num">GP</th><th class="num">MIN</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">STL</th><th class="num">BLK</th><th class="num">FG%</th><th class="num">3P%</th><th class="num">FT%</th></tr></thead>
+    <tbody>
+    {% for r in regular|reverse %}
+    <tr class="{{ 'sub-row' if r.TEAM_ABBREVIATION != 'TOT' and (regular|selectattr('SEASON_ID', 'equalto', r.SEASON_ID)|list|length) > 1 }}">
+      <td>{{ r.SEASON_ID }}</td><td>{{ "Total" if r.TEAM_ABBREVIATION == "TOT" else r.TEAM_ABBREVIATION }}</td><td class="num">{{ r.PLAYER_AGE|int if r.PLAYER_AGE else "" }}</td>
+      <td class="num">{{ r.GP }}</td><td class="num">{{ r.MIN }}</td><td class="num"><b>{{ r.PTS }}</b></td><td class="num">{{ r.REB }}</td><td class="num">{{ r.AST }}</td>
+      <td class="num">{{ r.STL }}</td><td class="num">{{ r.BLK }}</td><td class="num">{{ r.FG_PCT|pct(1) }}</td><td class="num">{{ r.FG3_PCT|pct(1) if r.FG3A else "–" }}</td><td class="num">{{ r.FT_PCT|pct(1) if r.FTA else "–" }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if playoffs %}
+  <details>
+    <summary>Playoffs ({{ playoffs|length }} season{{ "s" if playoffs|length != 1 }})</summary>
+    <div class="table-wrap">
+    <table class="career">
+      <thead><tr><th>Season</th><th>Team</th><th class="num">GP</th><th class="num">MIN</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">FG%</th><th class="num">3P%</th></tr></thead>
+      <tbody>
+      {% for r in playoffs|reverse %}
+      <tr><td>{{ r.SEASON_ID }}</td><td>{{ r.TEAM_ABBREVIATION }}</td><td class="num">{{ r.GP }}</td><td class="num">{{ r.MIN }}</td><td class="num"><b>{{ r.PTS }}</b></td><td class="num">{{ r.REB }}</td><td class="num">{{ r.AST }}</td><td class="num">{{ r.FG_PCT|pct(1) }}</td><td class="num">{{ r.FG3_PCT|pct(1) if r.FG3A else "–" }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if recent %}
+<section class="card">
+  <h2>Last {{ recent|length }} games <small class="muted">· {{ recent_season }}</small></h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Date</th><th>Game</th><th class="num">MIN</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">3PM</th><th class="num">FG</th><th class="num">+/−</th></tr></thead>
+    <tbody>
+    {% for g in recent %}
+    <tr><td>{{ g.GAME_DATE.strftime("%-d %b") }}</td><td>{{ g.MATCHUP }} <b class="{{ 'good' if g.WL == 'W' else 'bad' }}">{{ g.WL }}</b></td>
+      <td class="num">{{ g.MIN }}</td><td class="num"><b>{{ g.PTS }}</b></td><td class="num">{{ g.REB }}</td><td class="num">{{ g.AST }}</td><td class="num">{{ g.FG3M }}</td>
+      <td class="num">{{ g.FGM }}/{{ g.FGA }}</td><td class="num">{{ g.PLUS_MINUS|signed(0) if g.PLUS_MINUS is not none else "–" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_version }}"></script>
+{% if regular|length > 1 %}
+<script>
+  drawCareer({{ regular|map(attribute="SEASON_ID")|list|tojson }}, {{ regular|map(attribute="TEAM_ABBREVIATION")|list|tojson }},
+    {{ regular|map(attribute="PTS")|list|tojson }}, {{ regular|map(attribute="REB")|list|tojson }}, {{ regular|map(attribute="AST")|list|tojson }});
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h2>Any matchup</h2>
+  </div>
+  <form class="controls matchup-form" action="/matchup" method="get">
+    <label>Away
+      <select name="away" required>
+        {% for t in teams_sorted %}<option value="{{ t.abbreviation }}" {% if t.abbreviation == "LAL" %}selected{% endif %}>{{ t.full_name }}</option>{% endfor %}
+      </select>
+    </label>
+    <span class="at">@</span>
+    <label>Home
+      <select name="home" required>
+        {% for t in teams_sorted %}<option value="{{ t.abbreviation }}" {% if t.abbreviation == "OKC" %}selected{% endif %}>{{ t.full_name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Predict</button>
+  </form>
+</section>
+
+<p class="muted small-print">Teams are ordered by projected net rating: points scored minus points allowed per 100 possessions,
+  for the current roster{% if saved_out %} without the {{ saved_out|length }} player{{ "s" if saved_out|length != 1 }} marked unavailable{% endif %}.</p>
+
+<div class="grid">
+  {% for conf, rows in conferences.items() %}
+  <section class="card">
+    <h2>{{ conf }}ern Conference</h2>
+    <ol class="team-list">
+      {% for r in rows %}
+      <li>
+        <a href="/team/{{ r.team.abbreviation }}" class="team-row">
+          <img src="{{ logo(r.team.id) }}" alt="" class="logo" loading="lazy">
+          <span class="team-name">
+            <b>{{ r.team.full_name }}</b>
+            <small class="muted">
+              {% if r.record %}{{ r.record }}{% if r.record_season != lg.cur %} last season{% endif %}{% endif %}
+              {% if r.next %} · Next: {{ "vs" if r.next.home else "@" }} {{ r.next.opp }} {{ r.next.start.strftime("%a %-d %b") }}{% endif %}
+            </small>
+          </span>
+          <span class="num rating {{ 'good' if r.rating.net > 0 else 'bad' }}">{{ r.rating.net|signed }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

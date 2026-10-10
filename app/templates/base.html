@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NBA{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <main class="page">
+    <header class="topbar">
+      <div>
+        <h1><a href="/" class="home-link">NBA</a></h1>
+        <p class="muted">
+          {% if status.last_synced %}Data pulled {{ status.last_synced.strftime("%-d %b, %-I:%M %p") }}{% else %}Not synced yet{% endif %}
+          · {{ lg.cur if lg else "" }} season
+        </p>
+      </div>
+      <div class="topbar-actions">
+        <form method="post" action="/refresh">
+          <input type="hidden" name="back" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+          <button type="submit" class="secondary" {% if status.running %}disabled{% endif %}>
+            {% if status.running %}Updating… {{ status.done }}/{{ status.total }}{% else %}Refresh data{% endif %}
+          </button>
+        </form>
+      </div>
+    </header>
+
+    {% if status.error and not status.running %}<p class="banner banner-error">Last update failed: {{ status.error }}</p>{% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+  {% if status.running %}
+  <!-- Reload when the background update finishes, so the page shows the new data. -->
+  <script>setTimeout(() => window.location.reload(), 15000);</script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

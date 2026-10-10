@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}{{ sides[0].team.abbreviation }} @ {{ sides[1].team.abbreviation }} · NBA{% endblock %}
+{% macro team_cell(side) %}<a href="/team/{{ side.team.abbreviation }}" class="team-inline"><img src="{{ logo(side.team.id) }}" alt="" class="logo-sm">{{ side.team.nickname }}</a>{% endmacro %}
+{% block content %}
+{% set away, home = sides[0], sides[1] %}
+<nav class="crumbs"><a href="/">Teams</a> / {{ team_cell(away) }} @ {{ team_cell(home) }}</nav>
+
+<p class="muted game-meta">
+  {{ kind }}{% if game %}{% if game.gameSubLabel %} · {{ game.gameSubLabel }}{% endif %}
+  · {{ game.start.strftime("%A %-d %B, %-I:%M %p") }} NZ time · {{ game.arenaName }}, {{ game.arenaCity }}{% if game.isNeutral %} (neutral site){% endif %}{% endif %}
+</p>
+
+{% if game and game.gameStatus == 3 %}
+<p class="banner">Final: {{ away.team.nickname }} {{ game.awayTeam_score }} – {{ game.homeTeam_score }} {{ home.team.nickname }}.
+  The prediction below uses today's data, so it isn't what the model said before the game.</p>
+{% elif game and game.gameStatus == 2 %}
+<p class="banner">Live now: {{ away.team.nickname }} {{ game.awayTeam_score }} – {{ game.homeTeam_score }} {{ home.team.nickname }} ({{ game.gameStatusText }})</p>
+{% endif %}
+
+<section class="card prediction">
+  <div class="scoreline">
+    {% for side in sides %}
+    <div class="side side-{{ side.key }}">
+      <img src="{{ logo(side.team.id) }}" alt="" class="logo-lg">
+      <a href="/team/{{ side.team.abbreviation }}" class="side-name">{{ side.team.full_name }}</a>
+      <span class="side-pts">{{ side.pts|round|int }}</span>
+      <span class="muted">{{ side.win|pct }} to win</span>
+    </div>
+    {% if loop.first %}<div class="vs muted">{{ "@" }}</div>{% endif %}
+    {% endfor %}
+  </div>
+  <div class="winprob" role="img" aria-label="Win chance: {{ away.team.nickname }} {{ away.win|pct }}, {{ home.team.nickname }} {{ home.win|pct }}">
+    <span class="seg seg-away" style="width: {{ 100 * away.win }}%" title="{{ away.team.nickname }} {{ away.win|pct(1) }}"></span>
+    <span class="seg seg-home" style="width: {{ 100 * home.win }}%" title="{{ home.team.nickname }} {{ home.win|pct(1) }}"></span>
+  </div>
+  <div class="winprob-legend">
+    <span><i class="swatch seg-away"></i>{{ away.team.nickname }} {{ away.win|pct }}</span>
+    <span>Expected margin: {{ (home.team.nickname if p.margin > 0 else away.team.nickname) }} by {{ "%.1f"|format(p.margin|abs) }} · {{ "%.0f"|format(p.pace) }} possessions</span>
+    <span>{{ home.team.nickname }} {{ home.win|pct }}<i class="swatch seg-home"></i></span>
+  </div>
+</section>
+
+<div class="grid">
+  <section class="card">
+    <h2>How the margin is built</h2>
+    <table>
+      <thead><tr><th>Factor</th><th class="num">Points to {{ home.team.nickname }}</th></tr></thead>
+      <tbody>
+        {% for label, value in p.factors %}
+        <tr><td>{{ label }}</td><td class="num {{ 'good' if value > 0.05 else 'bad' if value < -0.05 }}">{{ value|signed }}</td></tr>
+        {% endfor %}
+        <tr class="total"><td><b>Expected margin</b></td><td class="num"><b>{{ p.margin|signed }}</b></td></tr>
+      </tbody>
+    </table>
+    <p class="muted small-print">Points per game at this game's pace. Positive favours {{ home.team.nickname }}, negative favours {{ away.team.nickname }}.
+      Real results land within about ±13 points of the expected margin two times in three.</p>
+  </section>
+
+  <section class="card">
+    <h2>Team comparison</h2>
+    <table>
+      <thead><tr><th></th><th class="num">{{ away.team.abbreviation }}</th><th class="num">{{ home.team.abbreviation }}</th></tr></thead>
+      <tbody>
+        <tr><td>Record</td>{% for s in sides %}<td class="num">{{ s.record or "–" }}{% if s.record_season != lg.cur %} <small class="muted">({{ s.record_season }})</small>{% endif %}</td>{% endfor %}</tr>
+        <tr><td>Offence <small class="muted">pts per 100</small></td>{% for s in sides %}<td class="num {{ 'good' if s.ortg > sides[1 - loop.index0].ortg }}">{{ "%.1f"|format(s.ortg) }}</td>{% endfor %}</tr>
+        <tr><td>Defence <small class="muted">allowed per 100</small></td>{% for s in sides %}<td class="num {{ 'good' if s.drtg < sides[1 - loop.index0].drtg }}">{{ "%.1f"|format(s.drtg) }}</td>{% endfor %}</tr>
+        <tr><td>Net rating</td>{% for s in sides %}<td class="num {{ 'good' if s.net > sides[1 - loop.index0].net }}">{{ s.net|signed }}</td>{% endfor %}</tr>
+        <tr><td>Pace</td>{% for s in sides %}<td class="num">{{ "%.1f"|format(s.pace) }}</td>{% endfor %}</tr>
+        <tr><td>Last 10 games</td>{% for s in sides %}<td class="num">{% if s.last10 %}{{ s.last10.w }}–{{ s.last10.l }} <small class="muted">({{ s.last10.net|signed }})</small>{% else %}–{% endif %}</td>{% endfor %}</tr>
+        <tr><td>Back-to-back</td>{% for s in sides %}<td class="num">{{ "Yes" if s.b2b else "No" }}</td>{% endfor %}</tr>
+      </tbody>
+    </table>
+    <p class="muted small-print">Ratings are projected for the players available in this game.</p>
+  </section>
+</div>
+
+<form id="out-form" class="out-bar card" method="post" action="/unavailable/save">
+  <p>Tick <b>Out</b> next to any player to see the prediction without him. His minutes go to teammates and the team rating moves by his estimated impact.</p>
+  <input type="hidden" name="team_ids" value="{{ away.team.id }},{{ home.team.id }}">
+  <input type="hidden" name="out" value="{{ out|join(',') }}">
+  <input type="hidden" name="back" value="{{ request.url.path }}">
+  {% if out_changed %}
+  <div class="form-actions">
+    <button type="submit">Save as unavailable for all games</button>
+    <a href="{{ request.url.path }}{% if not game %}?home={{ home.team.abbreviation }}&away={{ away.team.abbreviation }}{% endif %}" class="small-link">Reset to saved list</a>
+    <span class="muted">Only this page is changed until you save.</span>
+  </div>
+  {% elif saved %}<p class="muted">{{ saved|length }} player{{ "s are" if saved|length != 1 else " is" }} marked unavailable from your saved list.</p>{% endif %}
+</form>
+
+<div class="grid">
+  {% for side in sides %}
+  <section class="card">
+    <h2 class="with-logo"><img src="{{ logo(side.team.id) }}" alt="" class="logo-sm"> {{ side.team.full_name }} · expected box score</h2>
+    <div class="table-wrap">
+    <table class="box">
+      <thead><tr><th>Out</th><th>Player</th><th class="num">MIN</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">3PM</th><th class="num">STL</th><th class="num">BLK</th></tr></thead>
+      <tbody>
+      {% for line in side.players %}
+      <tr>
+        <td><input type="checkbox" class="out-toggle" value="{{ line.player.id }}" aria-label="{{ line.player.name }} out"></td>
+        <td><a href="/player/{{ line.player.id }}">{{ line.player.name }}</a></td>
+        <td class="num">{{ line.MIN|round|int }}</td>
+        <td class="num"><b>{{ "%.1f"|format(line.PTS) }}</b></td>
+        <td class="num">{{ "%.1f"|format(line.REB) }}</td>
+        <td class="num">{{ "%.1f"|format(line.AST) }}</td>
+        <td class="num">{{ "%.1f"|format(line.FG3M) }}</td>
+        <td class="num">{{ "%.1f"|format(line.STL) }}</td>
+        <td class="num">{{ "%.1f"|format(line.BLK) }}</td>
+      </tr>
+      {% endfor %}
+      {% for pl in side.others %}
+      {% set is_out = pl.id in out %}
+      <tr class="{{ 'is-out' if is_out else 'bench' }}">
+        <td><input type="checkbox" class="out-toggle" value="{{ pl.id }}" {% if is_out %}checked{% endif %} aria-label="{{ pl.name }} out"></td>
+        <td><a href="/player/{{ pl.id }}">{{ pl.name }}</a> <small class="muted">{{ "Out" if is_out else "Outside the rotation" }}</small></td>
+        <td class="num" colspan="7"></td>
+      </tr>
+      {% endfor %}
+      <tr class="total"><td></td><td><b>Team</b></td><td class="num">240</td><td class="num"><b>{{ "%.1f"|format(side.pts) }}</b></td>
+        <td class="num">{{ "%.1f"|format(side.players|sum(attribute="REB")) }}</td><td class="num">{{ "%.1f"|format(side.players|sum(attribute="AST")) }}</td>
+        <td class="num">{{ "%.1f"|format(side.players|sum(attribute="FG3M")) }}</td><td class="num">{{ "%.1f"|format(side.players|sum(attribute="STL")) }}</td><td class="num">{{ "%.1f"|format(side.players|sum(attribute="BLK")) }}</td></tr>
+      </tbody>
+    </table>
+    </div>
+    {% if side.evidence %}
+    <h3>How {{ side.team.nickname }} have done without them</h3>
+    <ul class="evidence">
+      {% for e in side.evidence %}
+      {% for s in e.seasons %}
+      <li><b>{{ e.player.name }}</b>, {{ s.season }}:
+        {% if s.without %}{{ s.without.w }}–{{ s.without.l }} without him (net {{ s.without.net|signed }}){% else %}never missed a game{% endif %}{% if s.with %}, {{ s.with.w }}–{{ s.with.l }} with him (net {{ s.with.net|signed }}){% endif %}</li>
+      {% else %}<li><b>{{ e.player.name }}</b>: no games for {{ side.team.nickname }} in the last two seasons.</li>{% endfor %}
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+<p class="muted small-print">Expected minutes come from each player's usual minutes, scaled to 240 across a 10-man rotation. Per-minute rates blend this season with last season (last season at 60% weight).
+  Points, assists and threes are scaled to the team's expected score; rebounds, steals and blocks to the game's pace.</p>
+
+{% if box %}
+<section class="card">
+  <h2>Actual box score</h2>
+  <div class="grid two-tables">
+  {% for side in sides %}
+    <div class="table-wrap">
+      <h3 class="with-logo"><img src="{{ logo(side.team.id) }}" alt="" class="logo-sm"> {{ side.team.nickname }}</h3>
+      <table class="box">
+        <thead><tr><th>Player</th><th class="num">MIN</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">3PM</th><th class="num">+/−</th></tr></thead>
+        <tbody>
+        {% for r in box.get(side.team.id, []) %}
+        <tr><td><a href="/player/{{ r.PLAYER_ID }}">{{ r.PLAYER_NAME }}</a></td><td class="num">{{ r.MIN }}</td><td class="num"><b>{{ r.PTS }}</b></td><td class="num">{{ r.REB }}</td><td class="num">{{ r.AST }}</td><td class="num">{{ r.FG3M }}</td><td class="num">{{ r.PLUS_MINUS|signed(0) if r.PLUS_MINUS is not none else "–" }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if h2h %}
+<section class="card">
+  <h2>Recent meetings</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Venue</th><th class="num">{{ home.team.abbreviation }}</th><th class="num">{{ away.team.abbreviation }}</th></tr></thead>
+    <tbody>
+    {% for g in h2h %}
+    <tr><td>{{ g.date.strftime("%-d %b %Y") }}</td><td>{{ home.team.nickname if g.home else away.team.nickname }} home</td>
+      <td class="num {{ 'good' if g.wl == 'W' }}">{{ g.pts }}</td><td class="num {{ 'good' if g.wl == 'L' }}">{{ g.opp }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/app.js?v={{ asset_version }}"></script>
+<script>initOutToggles({{ out|list|tojson }});</script>{% endblock %}
