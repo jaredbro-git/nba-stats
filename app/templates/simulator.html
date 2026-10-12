@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_playersearch.html" import player_search %}
+{% block title %}Season simulator · NBA{% endblock %}
+{% macro odds(v) %}<td class="num odds" style="--a: {{ v }}">{% if v >= 0.995 %}&gt;99%{% elif v < 0.005 and v > 0 %}&lt;1%{% elif v == 0 %}–{% else %}{{ v|pct }}{% endif %}</td>{% endmacro %}
+{% block content %}
+<div class="section-head">
+  <div>
+    <h1 class="page-title">Season simulator</h1>
+    <p class="muted">The rest of the season, the play-in and the playoffs, played {{ "{:,}".format(result.sims) }} times with the game model
+      ({{ result.games_left }} regular-season games left).</p>
+  </div>
+</div>
+
+<section class="card scenario">
+  <h2>What if…</h2>
+  <form method="get" class="scenario-form" id="scenario-form">
+    <input type="hidden" name="miss" value="{{ miss }}">
+    <label>Players on your unavailable list ({{ saved_count }})
+      <select name="saved">
+        {% for value, label in [("0", "Play every game"), ("5", "Miss their next 5 games"), ("10", "Miss their next 10 games"), ("20", "Miss their next 20 games"), ("rest", "Miss the rest of the season")] %}
+        <option value="{{ value }}" {% if value == saved_choice %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+  {% if scenario %}
+  <ul class="scenario-list">
+    {% for r in scenario %}
+    <li>
+      <a href="/player/{{ r.id }}">{{ r.name }}</a>{% if r.player and r.player.team_id %} <small class="muted">{{ lg.teams[r.player.team_id].abbreviation }}</small>{% endif %}
+      <select class="scenario-games" data-player="{{ r.id }}" aria-label="Games {{ r.name }} misses">
+        {% for value, label in choices %}<option value="{{ value if value else 'rest' }}" {% if value == r.games %}selected{% endif %}>misses {{ label|lower }}</option>{% endfor %}
+      </select>
+      <button type="button" class="secondary small" data-scenario-remove="{{ r.id }}">Remove</button>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <div class="scenario-add">
+    {{ player_search("Add a player who misses games", "e.g. Shai Gilgeous-Alexander") }}
+  </div>
+  {% if scenario %}<a class="small-link" href="?saved={{ saved_choice }}">Clear what-ifs</a>{% endif %}
+</section>
+
+<div class="tiles">
+  {% for t in favourites %}
+  <div class="tile"><span class="tile-label"><img src="{{ logo(t.team.id) }}" alt="" class="logo-sm"> {{ t.team.nickname }}</span>
+    <span class="tile-value">{{ t.title|pct(1) }}</span><span class="tile-sub">title · {{ t.wins|round|int }} wins</span></div>
+  {% endfor %}
+</div>
+
+{% for conf, teams in conferences.items() %}
+<section class="card">
+  <h2>{{ conf }}ern Conference</h2>
+  <div class="table-wrap">
+  <table class="sim-table">
+    <thead><tr>
+      <th>Team</th><th class="num">Now</th><th class="num">Projected</th><th class="num">80% range</th>
+      <th class="num">#1 seed</th><th class="num">Top 6</th><th class="num">Play-in</th><th class="num">Playoffs</th>
+      <th class="num">2nd round</th><th class="num">Conf. finals</th><th class="num">Finals</th><th class="num">Title</th>
+    </tr></thead>
+    <tbody>
+    {% for t in teams %}
+    <tr {% if loop.index == 6 or loop.index == 10 %}class="cutoff"{% endif %}>
+      <td><a href="/team/{{ t.team.abbreviation }}" class="team-inline"><img src="{{ logo(t.team.id) }}" alt="" class="logo-sm">{{ t.team.nickname }}</a></td>
+      <td class="num muted">{{ t.record[0] }}–{{ t.record[1] }}</td>
+      <td class="num"><b>{{ t.wins|round|int }}–{{ t.losses|round|int }}</b></td>
+      <td class="num muted">{{ t.low }}–{{ t.high }} wins</td>
+      {{ odds(t.seed1) }}{{ odds(t.top6) }}{{ odds(t.playin) }}{{ odds(t.playoffs) }}{{ odds(t.round2) }}{{ odds(t.conf_finals) }}{{ odds(t.finals) }}{{ odds(t.title) }}
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endfor %}
+
+<p class="muted small-print">How it works: every remaining game gets a win chance from the game model, with players marked out for the games they miss.
+  Each simulated season also draws every team's true strength from a spread of ±{{ "%.1f"|format(result.team_sd) }} points around its projection
+  (wider before the season, narrower as games are played), so long-shot runs happen about as often as they do in reality.
+  Top six make the playoffs; 7–10 go to the play-in. Series are best of seven, higher seed hosting games 1, 2, 5 and 7.
+  Players out for the rest of the season also miss the playoffs. Ties in the standings are broken at random. Lines mark 6th and 10th.
+  Games not on the schedule yet (NBA Cup knockouts, and the games scheduled later for teams knocked out of the Cup) are played against a
+  league-average opponent at a neutral site, so every team plays 82.</p>
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_version }}"></script>
+<script>initScenario();</script>
+{% endblock %}

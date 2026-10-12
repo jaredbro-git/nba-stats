@@ -1,6 +1,8 @@
 {% extends "base.html" %}
+{% from "_shotchart.html" import shot_chart with context %}
+{% from "_playersearch.html" import player_search %}
 {% block title %}{{ info.DISPLAY_FIRST_LAST or "Player" }} · NBA{% endblock %}
-{% block head %}<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>{% endblock %}
+{% block head %}{% if career_job %}<meta http-equiv="refresh" content="3">{% endif %}<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/">Teams</a>{% if team %} / <a href="/team/{{ team.abbreviation }}">{{ team.full_name }}</a>{% endif %} / {{ info.DISPLAY_FIRST_LAST }}</nav>
 
@@ -40,23 +42,6 @@
     {% endif %}
   </section>
 
-  <section class="card">
-    <h2>Shot locations{% if style_season %} <small class="muted">· {{ style_season }}</small>{% endif %}</h2>
-    {% if zones %}
-    <ul class="zone-bars">
-      {% for z in zones %}
-      <li>
-        <span class="zone-name">{{ z.label }}</span>
-        <span class="zone-bar" title="{{ z.fga|int }} shots, {{ z.share|pct(1) }} of his attempts"><span style="width: {{ 100 * z.share }}%"></span></span>
-        <span class="num">{{ z.share|pct }}</span>
-        <span class="num zone-pct {{ 'good' if z.pct and z.pct > z.league_pct + 0.02 else 'bad' if z.pct is not none and z.fga >= 20 and z.pct < z.league_pct - 0.02 }}">{{ z.pct|pct if z.fga else "–" }}</span>
-      </li>
-      {% endfor %}
-    </ul>
-    <p class="muted small-print">Bar: share of his shots from each zone. Right column: his field goal % there, green or red when 2+ points above or below the league average.</p>
-    {% else %}<p class="muted">No shot data.</p>{% endif %}
-  </section>
-
   {% if player %}
   <section class="card">
     <h2>Impact</h2>
@@ -88,6 +73,143 @@
     {% else %}<p class="muted">No NBA regular-season games yet.</p>{% endif %}
   </section>
 </div>
+
+<form method="get" class="card filter-bar" data-autosubmit>
+  <label>Against
+    <select name="vs">
+      <option value="">All opponents</option>
+      {% for t in teams_sorted %}<option value="{{ t.abbreviation }}" {% if shot_vs == t.id %}selected{% endif %}>{{ t.full_name }}</option>{% endfor %}
+    </select>
+  </label>
+  {% if shot_seasons %}
+  <label>Shot chart season
+    <select name="season">
+      {% for s in shot_seasons %}<option value="{{ s }}" {% if s == shot_season %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      {% if shot_seasons|length > 1 %}<option value="career" {% if shot_season == "career" %}selected{% endif %}>Career ({{ shot_seasons|length }} seasons)</option>{% endif %}
+    </select>
+  </label>
+  {% endif %}
+  <noscript><button type="submit">Show</button></noscript>
+  <p class="muted">{% if opponent_team %}Shot chart and matchups against the {{ opponent_team.full_name }}.{% else %}Pick a team to see his shots against them and every player on their roster.{% endif %}</p>
+</form>
+
+<section class="card">
+  <h2>Shot chart{% if shot_season %} <small class="muted">· {{ "Career" if shot_season == "career" else shot_season }}{% if opponent_team %} vs {{ opponent_team.nickname }}{% endif %}</small>{% endif %}</h2>
+  {% if career_job %}
+    <p>Downloading his career shots: {{ career_job.done }} of {{ career_job.total }} seasons{% if career_job.error %} <span class="bad">({{ career_job.error }})</span>{% endif %}. This page refreshes by itself.</p>
+    <div class="progress"><span style="width: {{ 100 * career_job.done / career_job.total }}%"></span></div>
+  {% elif shot_error %}
+    <p class="bad">{{ shot_error }}</p>
+  {% elif shot_seasons %}
+    {{ shot_chart(chart) }}
+  {% else %}
+    <p class="muted">No NBA shots on record for him yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <h2>Matchups <small class="muted">· {{ tracking_since or "" }} to now</small></h2>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" aria-selected="true" data-tab="guarded">Guarded by</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="guarding">Guarding</button>
+    </div>
+  </div>
+  {% macro matchup_table(rows, who, key, best, worst) %}
+  {% if rows %}
+  <div class="mu-controls" data-for="mt-{{ key }}">
+    <label>Sort by
+      <select data-sort-preset>
+        <option value="poss:desc">Most possessions</option>
+        <option value="effect:asc">{{ best }}</option>
+        <option value="effect:desc">{{ worst }}</option>
+        <option value="vs_usual:asc">Biggest drop vs usual (raw)</option>
+        <option value="per100:asc">Fewest points per 100</option>
+        <option value="per100:desc">Most points per 100</option>
+        <option value="fg:asc">Lowest FG%</option>
+        <option value="fg:desc">Highest FG%</option>
+        <option value="fg3:asc">Lowest 3P%</option>
+        <option value="fg3:desc">Highest 3P%</option>
+        <option value="name:asc">Name</option>
+      </select>
+    </label>
+    <label>Min. possessions
+      <select data-min-poss>
+        <option value="0">Any</option><option value="10">10+</option><option value="25" {% if not opponent_team %}selected{% endif %}>25+</option>
+        <option value="50">50+</option><option value="100">100+</option><option value="200">200+</option>
+      </select>
+    </label>
+    <label>Position
+      <select data-group><option value="">All</option><option value="guard">Guards</option><option value="wing">Wings</option><option value="big">Bigs</option></select>
+    </label>
+    <label>Name<input type="search" data-name-filter placeholder="Filter"></label>
+    <label class="mu-check"><input type="checkbox" data-hide-never {% if not opponent_team %}checked{% endif %}> Hide never faced</label>
+    <span class="mu-count muted" aria-live="polite"></span>
+    {% if not opponent_team %}<small class="muted mu-note">Head-to-heads under 5 possessions aren't listed; pick a team above to see its whole roster.</small>{% endif %}
+  </div>
+  <div class="table-wrap">
+  <table class="matchups" id="mt-{{ key }}" data-sortable data-page="25">
+    <thead><tr>
+      <th><button type="button" data-sort="name">{{ who }}</button></th>
+      <th class="num"><button type="button" data-sort="poss">Poss.</button></th>
+      <th class="num"><button type="button" data-sort="fg">FG</button></th>
+      <th class="num"><button type="button" data-sort="fg3">3P</button></th>
+      <th class="num"><button type="button" data-sort="pts">Pts</button></th>
+      <th class="num"><button type="button" data-sort="per100">Per 100</button></th>
+      <th class="num"><button type="button" data-sort="vs_usual">Vs usual</button></th>
+      <th class="num"><button type="button" data-sort="effect" title="Sample-adjusted effect on his points per 100 possessions, as used in predictions">Est. effect</button></th>
+      <th></th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+    {% set h = r.hist %}
+    <tr class="clickable" data-matchup="{{ r.shooter }}:{{ r.defender }}"
+        data-name="{{ r.name }}" data-group="{{ r.group }}" data-never="{{ 0 if h else 1 }}" data-poss="{{ r.poss }}"
+        data-fg="{{ r.fg if r.fg is not none else '' }}" data-fg3="{{ r.fg3 if r.fg3 is not none else '' }}"
+        data-pts="{{ h.PLAYER_PTS if h else '' }}" data-per100="{{ r.per100 if r.per100 is not none else '' }}"
+        data-vs_usual="{{ r.vs_usual if r.vs_usual is not none else '' }}" data-effect="{{ r.effect if r.effect is not none else '' }}">
+      <td>{{ r.name }}{% if r.position %} <small class="muted">{{ r.position }}</small>{% endif %}{% if r.team and not opponent_team %} <small class="muted">{{ r.team }}</small>{% endif %}</td>
+      {% if h %}
+      <td class="num">{{ h.PARTIAL_POSS|round|int }}</td>
+      <td class="num">{{ h.MATCHUP_FGM|int }}/{{ h.MATCHUP_FGA|int }}{% if r.fg is not none %} <small class="muted">{{ r.fg|pct }}</small>{% endif %}</td>
+      <td class="num">{{ h.MATCHUP_FG3M|int }}/{{ h.MATCHUP_FG3A|int }}{% if r.fg3 is not none %} <small class="muted">{{ r.fg3|pct }}</small>{% endif %}</td>
+      <td class="num">{{ h.PLAYER_PTS|int }}</td>
+      <td class="num">{{ r.per100|round|int if r.per100 is not none else "–" }}</td>
+      <td class="num {{ 'good' if r.vs_usual is not none and r.vs_usual < -1 else 'bad' if r.vs_usual is not none and r.vs_usual > 1 }}">{{ r.vs_usual|signed(0) if r.vs_usual is not none else "–" }}</td>
+      {% else %}
+      <td colspan="6" class="never">Never matched up{% if tracking_since %} (since {{ tracking_since }}){% endif %}</td>
+      {% endif %}
+      <td class="num {{ 'good' if r.effect is not none and r.effect < -0.5 else 'bad' if r.effect is not none and r.effect > 0.5 }}">{{ r.effect|signed if r.effect is not none else "–" }}</td>
+      <td class="num"><button type="button" class="secondary small" data-matchup-open="{{ r.shooter }}:{{ r.defender }}">Expected</button></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <button type="button" class="secondary small mu-more" data-more-for="mt-{{ key }}" hidden>Show more</button>
+  {% else %}<p class="muted">No matchup data.</p>{% endif %}
+  {% endmacro %}
+  <div class="tab-panel" id="tab-guarded">
+    {{ player_search("Find a defender", "Any player, e.g. Jrue Holiday", fixed_shooter=info.PERSON_ID) }}
+    {{ matchup_table(guarded_by, "Defender", "guarded", "Best defenders first", "Worst defenders first") }}
+    <p class="muted small-print">Per 100: points he scored per 100 possessions with that defender guarding him. Vs usual: that minus his
+      usual rate (raw, so small samples swing wildly). Est. effect: the sample-adjusted version used in predictions, which "best/worst
+      defenders" sorts by. Click a column to sort, or a row for the expected outcome.</p>
+  </div>
+  <div class="tab-panel" id="tab-guarding" hidden>
+    {% if defender_rating is not none %}
+    <p>Defensive rating: <b class="{{ 'good' if defender_rating < -0.005 else 'bad' if defender_rating > 0.005 }}">{{ (100 * defender_rating)|signed }}</b> points per 100 possessions compared with what his matchups usually score
+      <small class="muted">(negative is better)</small></p>
+    {% endif %}
+    {{ player_search("Find a shooter", "Any player, e.g. Stephen Curry", fixed_defender=info.PERSON_ID) }}
+    {{ matchup_table(guarding, "Shooter", "guarding", "Shooters he held best first", "Shooters he held worst first") }}
+    <p class="muted small-print">Per 100: points each shooter scored per 100 possessions with him guarding. Vs usual: that minus the
+      shooter's usual rate. Est. effect: the sample-adjusted version, which "held best/worst" sorts by. Click a column to sort, or a row
+      for the expected outcome.</p>
+  </div>
+</section>
+
+<dialog class="matchup-dialog" id="matchup-dialog" aria-label="Matchup"></dialog>
 
 {% if regular|length > 1 %}
 <section class="card">

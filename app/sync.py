@@ -18,6 +18,12 @@ _lock = threading.Lock()
 _state = {"running": False, "done": 0, "total": 0, "error": None, "finished_at": None, "generation": 0}
 
 
+def history_seasons() -> list[str]:
+    """Finished seasons with matchup tracking: from 2017-18 to last season."""
+    first, prev = int(nba.FIRST_MATCHUP_SEASON[:4]), int(config.previous_season()[:4])
+    return [config.season_label(y) for y in range(first, prev + 1)]
+
+
 def _jobs(force: bool):
     cur, prev = config.current_season(), config.previous_season()
     fresh = 0 if force else config.REFRESH_HOURS
@@ -27,6 +33,9 @@ def _jobs(force: bool):
         lambda: nba.player_advanced(prev, None),
         lambda: nba.shot_zones(prev, None),
         *[(lambda t=t: nba.on_off(t, prev, None)) for t in TEAM_IDS],
+        *[(lambda s=s: nba.matchups(s, None)) for s in history_seasons()],
+        lambda: nba.closest_defender(prev, None),
+        lambda: nba.closest_defender(prev, None, "3 Pointers"),
         lambda: nba.schedule(cur, fresh),
         lambda: nba.game_logs(cur, "P", fresh),
         lambda: nba.game_logs(cur, "T", fresh),
@@ -37,6 +46,9 @@ def _jobs(force: bool):
         lambda: nba.player_advanced(cur, fresh),
         lambda: nba.shot_zones(cur, fresh),
         *[(lambda t=t: nba.on_off(t, cur, fresh)) for t in TEAM_IDS],
+        lambda: nba.matchups(cur, fresh),
+        lambda: nba.closest_defender(cur, fresh),
+        lambda: nba.closest_defender(cur, fresh, "3 Pointers"),
     ]
     return jobs, started
 
@@ -64,7 +76,11 @@ def _run(force: bool):
 
 
 def needs_refresh() -> bool:
-    cur = config.current_season()
+    cur, prev = config.current_season(), config.previous_season()
+    # Data added in later versions of the app (matchup history, defense) is fetched on the next refresh.
+    needed = [f"matchups_{s}" for s in history_seasons()] + [f"defend_{prev}", f"defend3_{prev}"]
+    if not all(nba.cached_at(k) for k in needed):
+        return True
     return not nba.is_fresh(f"gamelog_T_{cur}", config.REFRESH_HOURS) or not nba.is_fresh(f"schedule_{cur}", config.REFRESH_HOURS)
 
 

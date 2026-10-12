@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Trade machine · NBA{% endblock %}
+{% macro change(before, after, d=1, lower_better=False) %}{% set diff = after - before %}<span class="{{ 'good' if (diff > 0.05) != lower_better and diff|abs > 0.05 else 'bad' if diff|abs > 0.05 }}">{{ diff|signed(d) }}</span>{% endmacro %}
+{% macro pct_change(before, after) %}{% set diff = 100 * (after - before) %}<span class="{{ 'good' if diff > 0.5 else 'bad' if diff < -0.5 }}">{{ diff|signed(0) }} pts</span>{% endmacro %}
+{% block content %}
+<div class="section-head">
+  <div>
+    <h1 class="page-title">Trade machine</h1>
+    <p class="muted">Tick the players each team sends. Both teams' ratings, rotations and season odds are recalculated with the trade.</p>
+  </div>
+</div>
+
+<form method="get" class="card trade-form" id="trade-form">
+  <div class="trade-teams">
+    {% for side, team in [("a", ta), ("b", tb)] %}
+    <div class="trade-side">
+      <label class="trade-team">Team
+        <select name="{{ side }}" data-reset-trade>
+          {% for t in teams_sorted %}<option value="{{ t.abbreviation }}" {% if t.id == team.id %}selected{% endif %}>{{ t.full_name }}</option>{% endfor %}
+        </select>
+      </label>
+      <p class="muted">Sends to the {{ (tb if team.id == ta.id else ta).nickname }}:</p>
+      <ul class="trade-roster">
+        {% for p in rosters[team.id] %}
+        <li><label>
+          <input type="checkbox" name="send" value="{{ p.id }}" {% if p.id in sending %}checked{% endif %}>
+          <span>{{ p.name }}</span> <small class="muted">{{ p.position or "–" }} · {{ p.mpg|round|int }} min · impact {{ p.impact|signed }}</small>
+        </label></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="form-actions">
+    <button type="submit">Run trade</button>
+    {% if sending %}<a class="small-link" href="?a={{ ta.abbreviation }}&b={{ tb.abbreviation }}">Clear</a>{% endif %}
+    <span class="muted">No salary-cap check: the NBA stats data doesn't include contracts.</span>
+  </div>
+</form>
+
+{% if result %}
+<div class="grid">
+  {% for s in result.sides %}
+  <section class="card">
+    <h2 class="with-logo"><img src="{{ logo(s.team.id) }}" alt="" class="logo-sm"> {{ s.team.full_name }}</h2>
+    <p class="trade-moves">
+      {% if s.gets %}<b>Gets</b> {{ s.gets|map(attribute="name")|join(", ") }}{% endif %}
+      {% if s.gets and s.sends %}<br>{% endif %}
+      {% if s.sends %}<b>Sends</b> {{ s.sends|map(attribute="name")|join(", ") }}{% endif %}
+    </p>
+    <table>
+      <thead><tr><th></th><th class="num">Before</th><th class="num">After</th><th class="num">Change</th></tr></thead>
+      <tbody>
+        <tr><td>Net rating</td><td class="num">{{ s.before.net|signed }} <small class="muted">#{{ s.before.net_rank }}</small></td>
+          <td class="num"><b>{{ s.after.net|signed }}</b> <small class="muted">#{{ s.after.net_rank }}</small></td><td class="num">{{ change(s.before.net, s.after.net) }}</td></tr>
+        <tr><td>Offence <small class="muted">pts per 100</small></td><td class="num">{{ "%.1f"|format(s.before.off) }}</td><td class="num">{{ "%.1f"|format(s.after.off) }}</td><td class="num">{{ change(s.before.off, s.after.off) }}</td></tr>
+        <tr><td>Defence <small class="muted">allowed per 100</small></td><td class="num">{{ "%.1f"|format(s.before.def) }}</td><td class="num">{{ "%.1f"|format(s.after.def) }}</td><td class="num">{{ change(s.before.def, s.after.def, lower_better=True) }}</td></tr>
+        <tr class="total"><td>Projected record</td><td class="num">{{ s.sim[0].wins|round|int }}–{{ s.sim[0].losses|round|int }}</td>
+          <td class="num"><b>{{ s.sim[1].wins|round|int }}–{{ s.sim[1].losses|round|int }}</b></td><td class="num">{{ change(s.sim[0].wins, s.sim[1].wins) }} wins</td></tr>
+        <tr><td>Make playoffs</td><td class="num">{{ s.sim[0].playoffs|pct }}</td><td class="num">{{ s.sim[1].playoffs|pct }}</td><td class="num">{{ pct_change(s.sim[0].playoffs, s.sim[1].playoffs) }}</td></tr>
+        <tr><td>Reach Finals</td><td class="num">{{ s.sim[0].finals|pct }}</td><td class="num">{{ s.sim[1].finals|pct }}</td><td class="num">{{ pct_change(s.sim[0].finals, s.sim[1].finals) }}</td></tr>
+        <tr><td>Win title</td><td class="num">{{ s.sim[0].title|pct(1) }}</td><td class="num">{{ s.sim[1].title|pct(1) }}</td><td class="num">{{ pct_change(s.sim[0].title, s.sim[1].title) }}</td></tr>
+      </tbody>
+    </table>
+    <h3>Rotation <small class="muted">expected minutes</small></h3>
+    <table class="rotation">
+      <thead><tr><th>Player</th><th class="num">Before</th><th class="num">After</th></tr></thead>
+      <tbody>
+      {% for r in s.rotation %}
+      <tr class="{{ 'is-new' if not r.before and r.after else 'is-gone' if r.before and not r.after }}">
+        <td><a href="/player/{{ r.id }}">{{ r.name }}</a></td>
+        <td class="num">{{ r.before|round|int if r.before else "–" }}</td>
+        <td class="num">{{ r.after|round|int if r.after else "–" }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endfor %}
+</div>
+<p class="muted small-print">Ratings keep each team's starting point and count the traded players in full (like marking a player out, or in):
+  incoming players take minutes in the rotation and the team's rating moves by each player's estimated impact times his change in minutes.
+  Season odds come from {{ "{:,}" .format(10000) }} simulated seasons, with players on your unavailable list missing their next 10 games.</p>
+{% else %}
+<section class="card"><p class="muted">Tick at least one player and press <b>Run trade</b>.</p></section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_version }}"></script>
+<script>
+  // Changing a team starts a fresh trade.
+  document.querySelectorAll("[data-reset-trade]").forEach((select) => select.addEventListener("change", () => {
+    document.querySelectorAll('#trade-form input[name="send"]').forEach((box) => { box.checked = false; });
+    select.form.submit();
+  }));
+</script>
+{% endblock %}

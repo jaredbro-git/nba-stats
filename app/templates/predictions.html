@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Predictions · NBA{% endblock %}
+{% macro matchup(r) %}<span class="team-inline"><img src="{{ logo(r.away) }}" alt="" class="logo-sm">{{ r.away_team.abbreviation }}</span> @ <span class="team-inline"><img src="{{ logo(r.home) }}" alt="" class="logo-sm">{{ r.home_team.abbreviation }}</span>{% endmacro %}
+{% block content %}
+<div class="section-head">
+  <div>
+    <h1 class="page-title">Prediction tracker</h1>
+    <p class="muted">Each game's prediction is saved before tip-off and scored once the game is final.</p>
+  </div>
+  {% if kinds|length > 1 %}
+  <div class="tabs" role="tablist">
+    {% for k in kinds %}<a role="tab" class="tab-link" aria-selected="{{ 'true' if k == kind else 'false' }}" href="?kind={{ k }}">{{ labels[k] }}</a>{% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{% if kind == "pre" %}
+<p class="banner">Preseason is scored separately: starters play short minutes and coaches test rotations, so these results say more
+  about preseason than about the model.{% if has_backfilled %} Games played before the tracker existed are <b>backfilled</b>: predicted
+  afterwards, which is fair only because no regular-season games had been added to the model's data since.
+  <a href="?kind=pre&backfilled={{ 0 if backfilled else 1 }}">{{ "Leave them out" if backfilled else "Include them" }}</a>.{% endif %}</p>
+{% endif %}
+
+{% if summary.games %}
+<div class="tiles">
+  <div class="tile"><span class="tile-label">Winners picked</span><span class="tile-value">{{ summary.accuracy|pct }}</span>
+    <span class="tile-sub">{{ (summary.accuracy * summary.games)|round|int }} of {{ summary.games }} games</span></div>
+  <div class="tile"><span class="tile-label">Average margin miss</span><span class="tile-value">{{ "%.1f"|format(summary.margin_error) }}</span>
+    <span class="tile-sub">points off the final margin</span></div>
+  <div class="tile"><span class="tile-label">Average total miss</span><span class="tile-value">{{ "%.1f"|format(summary.total_error) }}</span>
+    <span class="tile-sub">points off the combined score</span></div>
+  <div class="tile"><span class="tile-label">Brier score</span><span class="tile-value">{{ "%.3f"|format(summary.brier) }}</span>
+    <span class="tile-sub">0.25 = coin flip; lower is better</span></div>
+</div>
+
+<div class="grid">
+  <section class="card">
+    <h2>Do favourites win as often as predicted?</h2>
+    <table>
+      <thead><tr><th>Favourite's win chance</th><th class="num">Games</th><th class="num">Predicted</th><th class="num">Actually won</th><th></th></tr></thead>
+      <tbody>
+      {% for b in summary.bins %}
+      <tr>
+        <td>{{ (100 * b.lo)|int }}–{{ [100, (100 * b.hi)|int]|min }}%</td>
+        <td class="num">{{ b.games }}</td>
+        <td class="num">{{ b.expected|pct if b.expected is not none else "–" }}</td>
+        <td class="num">{{ b.rate|pct if b.rate is not none else "–" }}</td>
+        <td class="calib">{% if b.rate is not none %}<span class="calib-bar"><i style="left: {{ 100 * b.expected }}%" title="Predicted"></i><b style="width: {{ 100 * b.rate }}%"></b></span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted small-print">A well-calibrated model's favourites win about as often as it says (bar reaching the white marker).
+      With only a few games per row, expect big swings.</p>
+  </section>
+  <section class="card">
+    <h2>Coverage</h2>
+    <p><b>{{ summary.games }}</b> finished game{{ "s" if summary.games != 1 }} scored{% if untracked %}, <b>{{ untracked }}</b> not tracked{% endif %}.</p>
+    <p class="muted">Predictions are saved while the app is open, for games starting in the next {{ ahead_hours }} hours, and refreshed
+      until tip-off. Games the app wasn't open for beforehand aren't tracked: they're never predicted after the fact.</p>
+  </section>
+</div>
+{% else %}
+<section class="card"><p class="muted">No finished games with a saved prediction yet{% if upcoming_rows %}: the first results come in after {{ upcoming_rows[0].start_local.strftime("%a %-d %b") }}{% endif %}.</p></section>
+{% endif %}
+
+{% if upcoming_rows %}
+<section class="card">
+  <h2>Upcoming <small class="muted">· saved predictions, updated until tip-off</small></h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Start (NZ)</th><th>Game</th><th class="num">Predicted</th><th class="num">Home win</th><th class="num">Saved</th></tr></thead>
+    <tbody>
+    {% for r in upcoming_rows %}
+    <tr class="clickable" data-href="/game/{{ r.game_id }}">
+      <td>{{ r.start_local.strftime("%a %-d %b, %-I:%M %p") }}</td>
+      <td>{{ matchup(r) }}</td>
+      <td class="num">{{ r.away_pts|round|int }}–{{ r.home_pts|round|int }}</td>
+      <td class="num">{{ r.home_win|pct }}</td>
+      <td class="num muted">{{ r.logged_at[11:16] }} UTC</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+{% if finished_rows %}
+<section class="card">
+  <h2>Results</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Date</th><th>Game</th><th class="num">Predicted</th><th class="num">Actual</th><th class="num">Favourite</th><th class="num">Margin miss</th><th></th></tr></thead>
+    <tbody>
+    {% for r in finished_rows %}
+    {% set fav = r.home_team if r.home_win >= 0.5 else r.away_team %}
+    <tr class="clickable" data-href="/game/{{ r.game_id }}">
+      <td>{{ r.start_local.strftime("%a %-d %b") }}</td>
+      <td>{{ matchup(r) }}{% if r.backfilled %} <small class="muted">backfilled</small>{% endif %}</td>
+      <td class="num">{{ r.away_pts|round|int }}–{{ r.home_pts|round|int }}</td>
+      <td class="num"><b>{{ r.result.away }}–{{ r.result.home }}</b></td>
+      <td class="num">{{ fav.abbreviation }} {{ [r.home_win, 1 - r.home_win]|max|pct }}</td>
+      <td class="num">{{ r.margin_error|signed }}</td>
+      <td class="num"><b class="{{ 'good' if r.correct else 'bad' }}">{{ "✓ Right" if r.correct else "✗ Wrong" }}</b></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/app.js?v={{ asset_version }}"></script>{% endblock %}

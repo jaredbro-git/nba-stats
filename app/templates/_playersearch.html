@@ -1,0 +1,12 @@
+{# Player search box for matchups. With fixed_shooter (or fixed_defender), picking a player opens that
+   matchup's popup straight away; inside a .pair-search, picks fill a shooter or defender slot instead. #}
+{% macro player_search(label, placeholder, fixed_shooter=None, fixed_defender=None, slot=None) %}
+<div class="player-search" {% if fixed_shooter %}data-fixed-shooter="{{ fixed_shooter }}"{% endif %}
+     {% if fixed_defender %}data-fixed-defender="{{ fixed_defender }}"{% endif %} {% if slot %}data-slot="{{ slot }}"{% endif %}>
+  <label>{{ label }}
+    <input type="search" placeholder="{{ placeholder }}" autocomplete="off" spellcheck="false"
+           role="combobox" aria-expanded="false" aria-autocomplete="list">
+  </label>
+  <ul class="ps-results" role="listbox" hidden></ul>
+</div>
+{% endmacro %}

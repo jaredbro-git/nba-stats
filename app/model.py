@@ -50,6 +50,14 @@ def _poss(df: pd.DataFrame) -> pd.Series:
     return df["FGA"] - df["OREB"] + df["TOV"] + 0.44 * df["FTA"]
 
 
+def _inches(height) -> float | None:
+    """Roster heights look like "6-6"."""
+    if not isinstance(height, str) or "-" not in height:
+        return None
+    feet, _, inches = height.partition("-")
+    return int(feet) * 12 + int(inches) if feet.isdigit() and inches.isdigit() else None
+
+
 def win_probability(margin: float) -> float:
     return 0.5 * (1 + math.erf(margin / (MARGIN_SD * math.sqrt(2))))
 
@@ -73,6 +81,7 @@ class Player:
     position: str = ""
     number: str = ""
     age: float | None = None
+    height: float | None = None  # inches
     how_acquired: str = ""
     mpg: float = 0.0             # expected minutes when available (before rotation scaling)
     rates: dict = field(default_factory=dict)   # per minute
@@ -192,7 +201,7 @@ class League:
                 self.players[r.PLAYER_ID] = Player(
                     id=r.PLAYER_ID, name=r.PLAYER, team_id=tid,
                     position=r.POSITION or "", number=str(r.NUM or "").removesuffix(".0") if r.NUM == r.NUM else "",
-                    age=r.AGE, how_acquired=r.HOW_ACQUIRED or "",
+                    age=r.AGE, how_acquired=r.HOW_ACQUIRED or "", height=_inches(r.HEIGHT),
                 )
 
         # Season totals and per-game averages.
@@ -270,14 +279,16 @@ class League:
             pl.impact_def = max(-IMPACT_CAP, min(IMPACT_CAP, k * d / w))
 
     def _schedule(self) -> pd.DataFrame:
+        """Regular season and postseason games. Every game, preseason included, is in self.all_games."""
         frames = nba.load(f"schedule_{self.cur}")
         if not frames:
+            self.all_games = pd.DataFrame()
             return pd.DataFrame()
-        df = frames[0]
-        df = df[df["gameId"].str[:3].isin(GAME_TYPES)].copy()
+        df = frames[0].copy()
         df["start"] = pd.to_datetime(df["gameDateTimeUTC"], utc=True).dt.tz_convert(config.TZ)
         df["us_date"] = pd.to_datetime(df["gameDateEst"].str[:10]).dt.date
-        return df.sort_values("start").reset_index(drop=True)
+        self.all_games = df.sort_values("start").reset_index(drop=True)
+        return self.all_games[self.all_games["gameId"].str[:3].isin(GAME_TYPES)].reset_index(drop=True)
 
     # --- Team strength --------------------------------------------------------
 
@@ -372,8 +383,12 @@ class League:
         # the league average; players marked out count in full.
         roster_off = ROSTER_WEIGHT * (parts["adj_off"] - self._offset["adj_off"])
         roster_def = ROSTER_WEIGHT * (parts["adj_def"] - self._offset["adj_def"])
-        healthy = {pid: m / 48 for pid, m in self.rotation(team_id, set()).items()}
-        out_off, out_def = self._impact_change(healthy, {pid: m / 48 for pid, m in mins.items()}) if out else (0.0, 0.0)
+        # After a trade (see with_trade), changes are measured from the team's pre-trade rotation, so
+        # players traded in or out count in full, like players marked out.
+        before_trade = self.__dict__.get("_pretrade_rotation", {}).get(team_id)
+        healthy = before_trade or {pid: m / 48 for pid, m in self.rotation(team_id, set()).items()}
+        changed = out or before_trade is not None
+        out_off, out_def = self._impact_change(healthy, {pid: m / 48 for pid, m in mins.items()}) if changed else (0.0, 0.0)
         return {
             "off": parts["off"] + roster_off + out_off,
             "def": parts["def"] + roster_def + out_def,
@@ -385,16 +400,62 @@ class League:
             "cur_weight": parts["cur_weight"],
         }
 
+    def with_trade(self, moves: dict[int, int]) -> "League":
+        """A copy of the league with players moved (player id -> new team id). Team ratings keep their
+        pre-trade starting point, and the moved players count in full against each team's pre-trade
+        rotation, so a trade's effect isn't damped like an offseason move."""
+        import copy
+        from dataclasses import replace
+        clone = copy.copy(self)
+        affected = {t for t in moves.values()} | {self.players[p].team_id for p in moves if p in self.players}
+        clone._pretrade_rotation = {t: {pid: m / 48 for pid, m in self.rotation(t, set()).items()} for t in affected}
+        clone.players = dict(self.players)
+        for pid, team in moves.items():
+            if pid in clone.players:
+                clone.players[pid] = replace(clone.players[pid], team_id=team)
+        clone._full_cache = dict(self._full_cache)   # pre-trade starting points
+        clone.__dict__.pop("_net_cache", None)
+        return clone
+
     # --- Predictions ------------------------------------------------------------
 
     def back_to_back(self, team_id: int, us_date: date) -> bool:
-        df = self.schedule
-        if df.empty:
-            return False
-        played = df[(df["homeTeam_teamId"] == team_id) | (df["awayTeam_teamId"] == team_id)]["us_date"]
-        return (us_date - timedelta(days=1)) in set(played)
+        if not hasattr(self, "_game_dates"):
+            dates: dict[int, set] = {}
+            for h, a, d in zip(self.schedule.get("homeTeam_teamId", []), self.schedule.get("awayTeam_teamId", []),
+                               self.schedule.get("us_date", [])):
+                dates.setdefault(h, set()).add(d)
+                dates.setdefault(a, set()).add(d)
+            self._game_dates = dates
+        return (us_date - timedelta(days=1)) in self._game_dates.get(team_id, ())
 
-    def predict(self, home_id: int, away_id: int, out: set[int], us_date: date | None = None, neutral: bool = False) -> dict:
+    def net_rating(self, team_id: int, out: set[int]) -> float:
+        """Projected net rating (per 100 possessions vs league average) with `out` unavailable. Cached."""
+        relevant = frozenset(pid for pid in out if self.players.get(pid) and self.players[pid].team_id == team_id)
+        key = (team_id, relevant)
+        cache = self.__dict__.setdefault("_net_cache", {})
+        if key not in cache:
+            s = self.strength(team_id, set(relevant))
+            cache[key] = (s["off"] + s["def"], s["pace"])
+        return cache[key][0]
+
+    def quick_margin(self, home_id: int, away_id: int, out: set[int], us_date: date | None = None, neutral: bool = False) -> float:
+        """The expected home margin, as in predict(), without player lines (for simulating whole seasons)."""
+        self.net_rating(home_id, out)
+        self.net_rating(away_id, out)
+        cache = self._net_cache
+        h = cache[(home_id, frozenset(p for p in out if self.players.get(p) and self.players[p].team_id == home_id))]
+        a = cache[(away_id, frozenset(p for p in out if self.players.get(p) and self.players[p].team_id == away_id))]
+        lg = self.league_avg()
+        pace = lg["pace"] + h[1] + a[1]
+        rest = 0.0
+        if us_date:
+            rest = B2B_PENALTY * (self.back_to_back(away_id, us_date) - self.back_to_back(home_id, us_date))
+        return pace * (h[0] - a[0]) / 100 + (0.0 if neutral else self.home_adv) + rest
+
+    def predict(self, home_id: int, away_id: int, out: set[int], us_date: date | None = None, neutral: bool = False,
+                matchups: dict[int, int] | None = None, with_matchups: bool = False) -> dict:
+        """matchups: shooter id -> chosen defender id (0 = no specific defender), overriding the likely ones."""
         lg = self.league_avg()
         h, a = self.strength(home_id, out), self.strength(away_id, out)
         pace = lg["pace"] + h["pace"] + a["pace"]
@@ -407,7 +468,7 @@ class League:
         home_pts = pace * (lg["ortg"] + h["off"] - a["def"]) / 100 + (hca + rest) / 2
         away_pts = pace * (lg["ortg"] + a["off"] - h["def"]) / 100 - (hca + rest) / 2
         margin = home_pts - away_pts
-        return {
+        result = {
             "home": {"id": home_id, "pts": home_pts, "strength": h, "players": self._player_lines(home_id, h, home_pts, pace), "b2b": b2b["home"]},
             "away": {"id": away_id, "pts": away_pts, "strength": a, "players": self._player_lines(away_id, a, away_pts, pace), "b2b": b2b["away"]},
             "margin": margin,
@@ -421,6 +482,50 @@ class League:
                 ("Back-to-back", rest),
             ],
         }
+        if with_matchups or matchups:
+            self._apply_matchups(result, matchups or {})
+        return result
+
+    def _apply_matchups(self, result: dict, overrides: dict[int, int]) -> None:
+        """Adds each side's main scorers with their likely and chosen defenders, and moves the
+        prediction for any defender the user changed (see matchups.py)."""
+        from . import matchups as mu
+        m = mu.load(self)
+        result["matchups"] = {}
+        team_change = {"home": 0.0, "away": 0.0}
+        for off_key, def_key in (("away", "home"), ("home", "away")):
+            off, dfn = result[off_key], result[def_key]
+            defenders = sorted(dfn["strength"]["minutes"], key=lambda pid: -dfn["strength"]["minutes"][pid])
+            rows = []
+            for line in sorted(off["players"], key=lambda l: -l["PTS"])[:mu.SHOOTERS_PER_TEAM]:
+                sid = line["player"].id
+                likely = m.likely_defender(sid, defenders)
+                chosen = overrides.get(sid, likely or 0)
+                if chosen and chosen not in defenders:
+                    chosen = likely or 0
+                base = line["PTS"]
+                change = m.points_change(sid, base, chosen, likely)
+                if change:
+                    line["PTS"] += change
+                    team_change[off_key] += change * mu.PASS_THROUGH
+                    # Teammates pick up the rest, in proportion to their scoring.
+                    others = [l for l in off["players"] if l is not line]
+                    total = sum(l["PTS"] for l in others) or 1
+                    for l in others:
+                        l["PTS"] -= change * (1 - mu.PASS_THROUGH) * l["PTS"] / total
+                rows.append({
+                    "shooter": line["player"], "pts": line["PTS"], "base_pts": base, "likely": likely,
+                    "chosen": chosen, "changed": (chosen or 0) != (likely or 0), "change": change,
+                    "vs_average": m.points_change(sid, base, chosen, None),
+                    "history": m.history(sid, chosen), "likely_history": m.history(sid, likely),
+                })
+            result["matchups"][off_key] = {"rows": rows, "defenders": defenders}
+        if any(team_change.values()):
+            result["home"]["pts"] += team_change["home"]
+            result["away"]["pts"] += team_change["away"]
+            result["margin"] = result["home"]["pts"] - result["away"]["pts"]
+            result["home_win"] = win_probability(result["margin"])
+        result["factors"].append(("Matchups you changed", team_change["home"] - team_change["away"]))
 
     def _player_lines(self, team_id: int, s: dict, team_pts: float, pace: float) -> list[dict]:
         mins = s["minutes"]

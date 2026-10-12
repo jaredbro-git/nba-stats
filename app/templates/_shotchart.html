@@ -1,0 +1,52 @@
+{# Shot chart: hexagon heat map, legend and zone table. c = shots.chart(...); defence = shots against a team. #}
+{% macro shot_chart(c, defence=False, id="shots") %}
+{% if not c or not c.fga %}
+<p class="muted">No shots to show for this selection.</p>
+{% else %}
+{% set who = "Opponents" if defence else "" %}
+<p class="shot-summary">
+  <span><b>{{ "{:,}".format(c.fga) }}</b> shots in {{ c.games }} games</span>
+  <span><b>{{ c.pct|pct(1) }}</b> FG% <span class="{{ 'good' if (c.pct > c.league) != defence else 'bad' }}">({{ ((c.pct - c.league) * 100)|signed }} vs league from the same spots)</span></span>
+  <span><b>{{ c.efg|pct(1) }}</b> eFG%</span>
+  <span><b>{{ c.three_share|pct }}</b> of shots are threes</span>
+</p>
+<figure class="shot-figure">
+  <svg viewBox="0 0 500 400" class="court" role="img"
+       aria-label="{{ 'Shots against' if defence else 'Shot chart' }}: hexagon size shows how often shots come from each spot, colour shows FG% compared with league average there">
+    <rect x="0" y="0" width="500" height="400" class="court-floor"/>
+    {% for h in c.hexes %}
+    <polygon points="{{ h.points }}" class="hex {{ h.cls }}" tabindex="0"
+      data-tip="{{ h.zone }}|{{ h.fgm }}/{{ h.fga }} ({{ h.pct|pct(1) }})|League {{ h.league|pct(1) }}|{{ ((h.pct - h.league) * 100)|signed }} pts"><title>{{ h.zone }}: {{ h.fgm }}/{{ h.fga }} ({{ h.pct|pct(1) }}), league {{ h.league|pct(1) }}</title></polygon>
+    {% endfor %}
+    <g class="court-lines">{{ court_svg() }}</g>
+  </svg>
+  <figcaption class="shot-legend">
+    <span class="legend-scale">
+      <span class="muted">{{ "Opponents shoot worse" if defence else "Colder than league" }}</span>
+      {% for cls in ["c4", "c3", "c2", "c1", "mid", "h1", "h2", "h3", "h4"] %}<i class="hex-swatch {{ cls }}"></i>{% endfor %}
+      <span class="muted">{{ "Opponents shoot better" if defence else "Hotter" }}</span>
+    </span>
+    <span class="legend-size muted"><i class="hex-size small"></i> fewer shots <i class="hex-size big"></i> more shots</span>
+  </figcaption>
+  <div class="shot-tip" role="status" hidden></div>
+</figure>
+<div class="table-wrap">
+<table class="zones">
+  <thead><tr><th>Zone</th><th class="num">Share of shots</th><th class="num">FG%</th><th class="num">League</th><th class="num">Difference</th></tr></thead>
+  <tbody>
+  {% for z in c.zones %}
+  <tr>
+    <td><i class="hex-swatch {{ z.cls }}"></i> {{ z.label }}</td>
+    <td class="num"><span class="share-bar" style="--w: {{ (100 * z.share)|round(1) }}%"></span> {{ z.share|pct }}</td>
+    <td class="num">{{ z.pct|pct(1) }}</td>
+    <td class="num">{{ z.league|pct(1) }}</td>
+    <td class="num {{ 'good' if (z.diff > 0.01) != defence and z.diff|abs > 0.01 else 'bad' if z.diff|abs > 0.01 }}">{{ (z.diff * 100)|signed }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted small-print">Colour compares FG% with what the league shot from the same zones{% if defence %}, so red means opponents shoot better than usual against this team{% endif %}.
+  Small samples are pulled toward league average so a 2-for-2 spot isn't "hot".</p>
+{% endif %}
+{% endmacro %}

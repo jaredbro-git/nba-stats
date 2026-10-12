@@ -88,6 +88,61 @@
   {% elif saved %}<p class="muted">{{ saved|length }} player{{ "s are" if saved|length != 1 else " is" }} marked unavailable from your saved list.</p>{% endif %}
 </form>
 
+{% if p.matchups %}
+<section class="card matchups-card">
+  <div class="section-head">
+    <h2>Matchups</h2>
+    {% if p.matchups.home.rows|selectattr("changed")|list or p.matchups.away.rows|selectattr("changed")|list %}
+    <a class="small-link" href="?{% if request.query_params.get('out') is not none %}out={{ request.query_params.get('out') }}{% endif %}{% if not game %}&home={{ home.team.abbreviation }}&away={{ away.team.abbreviation }}{% endif %}">Reset to likely matchups</a>
+    {% endif %}
+  </div>
+  <p class="muted">Each team's main scorers, with the defender most likely to guard them (whoever has guarded them most).
+    Pick a different defender to see how the prediction changes.</p>
+  <div class="grid two-tables">
+  {% for side in sides %}
+  {% set mu = p.matchups[side.key] %}
+  {% set defending = sides[1 - loop.index0] %}
+  <div>
+    <h3 class="with-logo"><img src="{{ logo(side.team.id) }}" alt="" class="logo-sm"> {{ side.team.nickname }} scorers vs {{ defending.team.nickname }} defenders</h3>
+    <ul class="mu-list">
+      {% for r in mu.rows %}
+      <li class="mu-row {{ 'is-changed' if r.changed }}">
+        <div class="mu-top">
+          <a href="/player/{{ r.shooter.id }}" class="mu-name">{{ r.shooter.name }}</a>
+          <span class="num"><b>{{ "%.1f"|format(r.pts) }}</b> pts{% if r.changed and r.change|abs >= 0.05 %} <span class="{{ 'good' if r.change > 0 else 'bad' }}">({{ r.change|signed }})</span>{% endif %}</span>
+        </div>
+        <label class="mu-select">Guarded by
+          <select class="matchup-select" data-shooter="{{ r.shooter.id }}" data-likely="{{ r.likely or 0 }}">
+            {% for d in mu.defenders %}
+            <option value="{{ d }}" {% if d == r.chosen %}selected{% endif %}>{{ lg.players[d].name }}{% if d == r.likely %} (likely){% endif %}</option>
+            {% endfor %}
+            <option value="0" {% if not r.chosen %}selected{% endif %}>No specific defender{% if not r.likely %} (likely){% endif %}</option>
+          </select>
+        </label>
+        <p class="mu-history muted">
+          {% if r.history %}
+            {{ r.history.MATCHUP_FGM|int }}/{{ r.history.MATCHUP_FGA|int }} FG, {{ r.history.PLAYER_PTS|int }} pts on {{ r.history.PARTIAL_POSS|round|int }} possessions in {{ r.history.GP|int }} game{{ "s" if r.history.GP != 1 }} against each other.
+          {% elif r.chosen %}
+            No history between them: uses {{ lg.players[r.chosen].name }}'s overall defensive rating.
+          {% else %}
+            Team defense, no specific defender.
+          {% endif %}
+          {% if r.chosen %}Est. {{ r.vs_average|signed }} pts vs an average defender.
+          <button type="button" class="link-button" data-matchup-open="{{ r.shooter.id }}:{{ r.chosen }}">Expected outcome</button>{% endif %}
+        </p>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+  </div>
+  <p class="muted small-print">How it works: from the NBA's matchup tracking (last two seasons), each defender has a rating for points allowed
+    per possession compared with what his matchups usually score, mostly based on FG% allowed as the closest defender and compared with players at his position.
+    A shooter's record against a specific defender adjusts that, more as their history grows. A primary defender is assumed to guard about 40% of a scorer's possessions,
+    and 60% of any change reaches the team score (teammates pick up the rest). The likely matchups are already part of the team ratings, so only changes move the prediction.</p>
+</section>
+{% endif %}
+
 <div class="grid">
   {% for side in sides %}
   <section class="card">
@@ -175,6 +230,7 @@
   </table>
 </section>
 {% endif %}
+<dialog class="matchup-dialog" id="matchup-dialog" aria-label="Matchup"></dialog>
 {% endblock %}
 {% block scripts %}<script src="/static/app.js?v={{ asset_version }}"></script>
-<script>initOutToggles({{ out|list|tojson }});</script>{% endblock %}
+<script>initOutToggles({{ out|list|tojson }}); initMatchupSelects();</script>{% endblock %}

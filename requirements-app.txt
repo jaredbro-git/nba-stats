@@ -1,0 +1,5 @@
+# The Mac app: the web app plus a native window, and the tools that package it.
+-r requirements.txt
+pywebview
+pyinstaller
+pillow

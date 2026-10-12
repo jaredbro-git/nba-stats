@@ -1,0 +1,71 @@
+{# Matchup popup body, loaded into <dialog id="matchup-dialog">. #}
+{% macro who(pl, pid, name) %}<a href="/player/{{ pid }}">{{ name }}</a>{% if pl and pl.team_id %} <small class="muted">{{ lg.teams[pl.team_id].abbreviation }}</small>{% endif %}{% endmacro %}
+{% macro size(pl) %}{% if pl and pl.height %}{{ (pl.height // 12)|int }}′{{ (pl.height % 12)|int }}″{% endif %}{% if pl and pl.position %} · {{ pl.position }}{% endif %}{% endmacro %}
+<div class="md-head">
+  <div>
+    <h2>{{ who(shooter, shooter_id, shooter_name) }} <span class="muted">guarded by</span> {{ who(defender, defender_id, defender_name) }}</h2>
+    <p class="muted">{{ size(shooter) }} <span class="md-vs">vs</span> {{ size(defender) }}</p>
+  </div>
+  <button type="button" class="secondary small" data-dialog-close aria-label="Close">Close</button>
+</div>
+
+{% if not est %}
+<p class="muted">Not enough tracked possessions for {{ shooter_name }} to estimate a matchup.</p>
+{% else %}
+{% set g = guarded / 100 %}
+{% if not hist %}
+{% if shooter_id == defender_id %}<p class="banner">Pick two different players.</p>{% endif %}
+<p class="banner">This matchup has never happened{% if tracking_since %} (matchups are tracked since {{ tracking_since }}){% endif %}. The expected outcome is estimated from each player's numbers.</p>
+{% endif %}
+
+<h3>Expected outcome</h3>
+<div class="tiles md-tiles">
+  <div class="tile"><span class="tile-label">Points per 100 possessions</span><span class="tile-value">{{ "%.1f"|format(est.pts100) }}</span>
+    <span class="tile-sub {{ 'good' if est.effect100 < -0.5 else 'bad' if est.effect100 > 0.5 }}">{{ est.effect100|signed }} vs his usual {{ "%.1f"|format(est.base_pts100) }}</span></div>
+  <div class="tile"><span class="tile-label">FG%</span><span class="tile-value">{{ est.fg|pct(1) }}</span>
+    <span class="tile-sub">usually {{ est.base_fg|pct(1) }}</span></div>
+  <div class="tile"><span class="tile-label">3P%</span><span class="tile-value">{{ est.fg3|pct(1) }}</span>
+    <span class="tile-sub">usually {{ est.base_fg3|pct(1) }}</span></div>
+</div>
+<p class="md-game">In a game where {{ defender_name }} is his main defender (about {{ (100 * share)|round|int }}% of his possessions, so ~{{ guarded|round|int }} possessions at {{ mpg|round|int }} minutes):
+  <b>{{ "%.1f"|format(est.pts100 * g) }} pts</b> on {{ "%.1f"|format(est.fga100 * g * est.fg) }}/{{ "%.1f"|format(est.fga100 * g) }} FG,
+  {{ "%.1f"|format(est.fg3a100 * g * est.fg3) }}/{{ "%.1f"|format(est.fg3a100 * g) }} 3P, {{ "%.1f"|format(est.fta100 * g) }} FTA and {{ "%.1f"|format(est.tov100 * g) }} turnovers.</p>
+
+{% if seasons %}
+<h3>Head to head <small class="muted">({{ est.confidence|lower }} confidence)</small></h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Season</th><th class="num">Games</th><th class="num">Poss.</th><th class="num">FG</th><th class="num">3P</th><th class="num">FTA</th><th class="num">Pts</th><th class="num">Per 100</th></tr></thead>
+  <tbody>
+  {% for s in seasons %}
+  <tr><td>{{ s.season }}</td><td class="num">{{ s.GP|int }}</td><td class="num">{{ s.PARTIAL_POSS|round|int }}</td>
+    <td class="num">{{ s.MATCHUP_FGM|int }}/{{ s.MATCHUP_FGA|int }}</td><td class="num">{{ s.MATCHUP_FG3M|int }}/{{ s.MATCHUP_FG3A|int }}</td>
+    <td class="num">{{ s.MATCHUP_FTA|int }}</td><td class="num">{{ s.PLAYER_PTS|int }}</td>
+    <td class="num">{{ (100 * s.PLAYER_PTS / s.PARTIAL_POSS)|round|int if s.PARTIAL_POSS else "–" }}</td></tr>
+  {% endfor %}
+  {% if seasons|length > 1 %}
+  <tr class="total"><td><b>Total</b></td><td class="num">{{ hist.GP|int }}</td><td class="num">{{ hist.PARTIAL_POSS|round|int }}</td>
+    <td class="num">{{ hist.MATCHUP_FGM|int }}/{{ hist.MATCHUP_FGA|int }}</td><td class="num">{{ hist.MATCHUP_FG3M|int }}/{{ hist.MATCHUP_FG3A|int }}</td>
+    <td class="num">{{ hist.MATCHUP_FTA|int }}</td><td class="num">{{ hist.PLAYER_PTS|int }}</td>
+    <td class="num">{{ (100 * hist.PLAYER_PTS / hist.PARTIAL_POSS)|round|int if hist.PARTIAL_POSS else "–" }}</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<h3>How it's estimated</h3>
+<table class="md-factors">
+  <tbody>
+    <tr><td>His usual scoring</td><td class="num">{{ "%.1f"|format(est.base_pts100) }} per 100</td>
+      <td class="muted">against everyone who's guarded him, recent seasons weighted most</td></tr>
+    <tr><td>{{ defender_name }}'s defensive rating</td><td class="num {{ 'good' if est.rating100 < -0.5 else 'bad' if est.rating100 > 0.5 }}">{{ est.rating100|signed }}</td>
+      <td class="muted">points per 100 vs what his matchups usually score{% if est.close_fg is not none %}; shooters hit {{ (100 * est.close_fg)|signed }} FG% points vs normal with him closest{% endif %}{% if est.close_fg3 is not none %} ({{ (100 * est.close_fg3)|signed }} on threes){% endif %}</td></tr>
+    <tr><td>Height difference</td><td class="num">{% if est.size is not none %}{{ est.size|signed(0) }}″{% else %}–{% endif %}</td>
+      <td class="muted">{% if est.size is not none %}{{ est.size_pts100|signed(2) }} per 100. Across all matchups, height changes FG% by only {{ (100 * size_fg_per_inch)|abs|round(2) }} points per inch once the defender's own ability is counted{% else %}height unknown for one of them{% endif %}</td></tr>
+    <tr><td>Head to head</td><td class="num">{% if est.h2h100 is not none %}{{ est.h2h100|signed }}{% else %}–{% endif %}</td>
+      <td class="muted">{% if est.h2h100 is not none %}his scoring vs this defender compared with usual, counted at {{ (100 * est.h2h_weight)|round|int }}% weight (more as their history grows){% else %}none: the estimate uses the rating and height only{% endif %}</td></tr>
+  </tbody>
+</table>
+<p class="muted small-print">From the NBA's matchup tracking. Matchups have no court locations: the NBA doesn't record which defender was on each shot.</p>
+{% endif %}

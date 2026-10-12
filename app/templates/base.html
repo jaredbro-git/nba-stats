@@ -27,6 +27,13 @@
       </div>
     </header>
 
+    <nav class="page-nav" aria-label="Pages">
+      {% for href, label, also in nav %}
+      {% set here = request.url.path == href or (href != "/" and request.url.path.startswith(href)) or (also and request.url.path.startswith(also)) %}
+      <a href="{{ href }}" {% if here %}aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+
     {% if status.error and not status.running %}<p class="banner banner-error">Last update failed: {{ status.error }}</p>{% endif %}
 
     {% block content %}{% endblock %}
