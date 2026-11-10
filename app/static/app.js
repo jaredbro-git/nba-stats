@@ -1,4 +1,4 @@
-// Shared page behaviour: schedule tabs, clickable rows, the game page's "Out" checkboxes
+// Shared page behaviour: schedule tabs, clickable rows, the "Out" checkboxes and their dock
 // and the career chart on player pages.
 
 // Tabs: buttons with data-tab="x" show #tab-x and hide its siblings.
@@ -14,28 +14,101 @@ document.querySelectorAll(".tabs").forEach((tabs) => {
   });
 });
 
+// Inside the game popup, game pages stay in the popup and everything else (teams, players) opens in the main window.
+const embedded = document.documentElement.classList.contains("embedded");
+function go(href) {
+  (embedded && !href.startsWith("/game/") && !href.startsWith("?") ? window.top : window).location.href = href;
+}
+if (embedded) {
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("a[href]");
+    if (!link || event.defaultPrevented) return;
+    const href = link.getAttribute("href");
+    if (href.startsWith("/") && !href.startsWith("/game/")) { event.preventDefault(); window.top.location.href = href; }
+  });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") window.parent.closeGamePopup?.(); });
+}
+
 // Table rows with data-href open that page when clicked anywhere (links inside still work).
 document.querySelectorAll("tr[data-href]").forEach((row) => {
   row.addEventListener("click", (event) => {
     if (event.target.closest("a, button, input")) return;
-    window.location.href = row.dataset.href;
+    go(row.dataset.href);
   });
 });
 
-// Game page: ticking "Out" reloads the page with ?out= listing every ticked player.
-function initOutToggles(out) {
-  const boxes = document.querySelectorAll(".out-toggle");
-  const ids = new Set(out.map(String));
-  boxes.forEach((box) => {
-    box.checked = ids.has(box.value);
-    box.addEventListener("change", () => {
-      const ticked = [...boxes].filter((b) => b.checked).map((b) => b.value);
-      const params = new URLSearchParams(window.location.search);
-      params.set("out", ticked.join(","));
-      boxes.forEach((b) => { b.disabled = true; });
-      window.location.search = params.toString();
+// Game cards (Today page) open the game in a popup instead of leaving the page. The popup is the real game
+// page in an iframe, so its Out switches, dock and matchup pickers all work; if anything was saved or
+// changed in it, the page behind reloads when it closes. Cmd/Ctrl-click still opens the full page.
+function initGamePopups(selector) {
+  const dialog = document.getElementById("game-popup");
+  if (!dialog) return;
+  const frame = dialog.querySelector("iframe");
+  const full = dialog.querySelector("[data-full-page]");
+  let loads = 0;
+  frame.addEventListener("load", () => {
+    loads += 1;
+    try { full.href = frame.contentWindow.location.pathname + frame.contentWindow.location.search; } catch (e) { /* not same-origin */ }
+  });
+  window.closeGamePopup = () => dialog.close();
+  dialog.addEventListener("close", () => {
+    const changed = loads > 1;
+    frame.src = "about:blank";
+    loads = 0;
+    if (changed) window.location.reload();
+  });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });  // the backdrop
+  dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
+  document.querySelectorAll(selector).forEach((card) => {
+    card.addEventListener("click", (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+      event.preventDefault();
+      loads = 0;
+      frame.src = card.getAttribute("href");
+      full.href = card.getAttribute("href");
+      dialog.showModal();
     });
   });
+}
+
+// "Out" checkboxes (game and team pages): tick as many as you like without the page reloading. A bar
+// docked at the bottom of the window (#out-dock) then offers to update the prediction (?out=, when
+// `preview`) or save them; its buttons submit #out-form, whose hidden "out" input follows the ticks.
+// shown: who's out in what the page shows now; saved: the real list (game's own, or all-games).
+function initOutDock(shown, saved, preview) {
+  const boxes = [...document.querySelectorAll(".out-toggle")];
+  const form = document.getElementById("out-form");
+  const dock = document.getElementById("out-dock");
+  if (!form || !dock || !boxes.length) return;
+  const asSet = (ids) => new Set(ids.map(String));
+  const showing = asSet(shown), real = asSet(saved);
+  const ticked = () => new Set(boxes.filter((b) => b.checked).map((b) => b.value));
+  const differ = (a, b) => [...a].filter((x) => !b.has(x)).length + [...b].filter((x) => !a.has(x)).length;
+  const reset = () => boxes.forEach((b) => { b.checked = showing.has(b.value); });
+
+  function update() {
+    const now = ticked();
+    form.elements.out.value = [...now].join(",");
+    boxes.forEach((b) => b.closest("tr")?.classList.toggle("is-out", b.checked));
+    const pending = differ(now, showing), unsaved = differ(now, real);
+    dock.hidden = !pending && !unsaved;
+    dock.querySelector("[data-preview]")?.toggleAttribute("hidden", !preview || !pending);
+    dock.querySelector("[data-undo]").hidden = !pending;
+    dock.querySelectorAll("[data-save]").forEach((b) => { b.disabled = !unsaved; });
+    dock.querySelector("[data-dock-text]").textContent = pending
+      ? `${pending} change${pending === 1 ? "" : "s"}${preview ? " not in the prediction yet" : " not saved yet"}`
+      : "Previewing: not saved";
+  }
+
+  reset();
+  boxes.forEach((b) => b.addEventListener("change", update));
+  dock.querySelector("[data-preview]")?.addEventListener("click", () => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("out", form.elements.out.value);
+    window.location.search = params.toString();
+  });
+  dock.querySelector("[data-undo]").addEventListener("click", () => { reset(); update(); });
+  update();
 }
 
 // Player page: points, rebounds and assists per game for each season. A season split
@@ -187,6 +260,9 @@ document.querySelectorAll(".player-search").forEach((box) => {
   function pick(p) {
     results = []; active = -1; render();
     if (box.closest(".scenario-add") && window.onPlayerPicked) { input.value = ""; window.onPlayerPicked(p); return; }
+    if (box.dataset.slot === "go") { window.location.href = `/players/${p.id}`; return; }
+    // Pages that handle picks themselves (comparisons) define window.onSlotPicked(slot, player).
+    if (box.dataset.slot && window.onSlotPicked) { input.value = p.name; window.onSlotPicked(box.dataset.slot, p); return; }
     if (box.dataset.fixedShooter) { input.value = ""; window.openMatchup(`${box.dataset.fixedShooter}:${p.id}`); return; }
     if (box.dataset.fixedDefender) { input.value = ""; window.openMatchup(`${p.id}:${box.dataset.fixedDefender}`); return; }
     input.value = p.name;
@@ -241,68 +317,88 @@ document.querySelectorAll(".pair-search .pair-go").forEach((go) => {
   });
 });
 
-// Sortable, filterable matchup tables. Rows carry their values in data-* attributes; empty values
-// (e.g. FG% for a pair that never met) always sort last. Shows `data-page` rows, then "Show more".
+// Sortable, filterable tables. Rows carry their values in data-* attributes; empty values always sort
+// last. Controls in .mu-controls[data-for=<table id>] filter rows: data-filter="key" (equal),
+// data-filter-min="key" (at least), data-filter-text="key" (contains, several words all must match),
+// data-hide-never (rows with data-never="1"). One controls block can serve several tables
+// (data-for="a b"), and a table can have several. Shows `data-page` rows at a time, then "Show more".
+// Ties break on data-tiebreak.
 document.querySelectorAll("table[data-sortable]").forEach((table) => {
   const tbody = table.tBodies[0];
   const rows = [...tbody.rows];
-  const controls = document.querySelector(`.mu-controls[data-for="${table.id}"]`);
+  const controlSets = [...document.querySelectorAll(`.mu-controls[data-for~="${table.id}"]`)];
+  const controls = controlSets.find((c) => c.dataset.for === table.id) || controlSets[0];
+  const all = (selector) => controlSets.flatMap((c) => [...c.querySelectorAll(selector)]);
   const more = document.querySelector(`.mu-more[data-more-for="${table.id}"]`);
   const pageSize = Number(table.dataset.page) || 25;
+  const tiebreak = table.dataset.tiebreak || "poss";
   const preset = controls?.querySelector("[data-sort-preset]");
-  let [sortKey, sortDir] = (preset?.value || "poss:desc").split(":");
+  let [sortKey, sortDir] = (preset?.value || table.dataset.sort || "poss:desc").split(":");
   let shown = pageSize;
 
   const value = (row, key) => {
     const v = row.dataset[key];
-    if (key === "name") return v.toLowerCase();
-    return v === "" || v === undefined ? null : Number(v);
+    if (v === "" || v === undefined) return null;
+    const n = Number(v);
+    return Number.isNaN(n) ? v.toLowerCase() : n;
   };
+  const tie = (a, b) => (Number(b.dataset[tiebreak]) || 0) - (Number(a.dataset[tiebreak]) || 0);
+
+  function keep(row) {
+    if (!controls) return true;
+    for (const el of all("[data-filter]")) {
+      if (el.value && row.dataset[el.dataset.filter] !== el.value) return false;
+    }
+    for (const el of all("[data-filter-min]")) {
+      const min = Number(el.value || 0);
+      if (min && !(row.dataset.never === "1") && !((Number(row.dataset[el.dataset.filterMin]) || 0) >= min)) return false;
+    }
+    for (const el of all("[data-filter-text]")) {
+      const text = (row.dataset[el.dataset.filterText] || "").toLowerCase();
+      if (el.value.trim().toLowerCase().split(/\s+/).some((word) => word && !text.includes(word))) return false;
+    }
+    if (all("[data-hide-never]").some((el) => el.checked) && row.dataset.never === "1") return false;
+    return true;
+  }
 
   function apply() {
-    const minPoss = Number(controls?.querySelector("[data-min-poss]")?.value || 0);
-    const group = controls?.querySelector("[data-group]")?.value || "";
-    const name = (controls?.querySelector("[data-name-filter]")?.value || "").trim().toLowerCase();
-    const hideNever = controls?.querySelector("[data-hide-never]")?.checked;
-    const keep = rows.filter((r) =>
-      (r.dataset.never === "1" ? !hideNever : Number(r.dataset.poss) >= minPoss) &&
-      (!group || r.dataset.group === group) &&
-      (!name || r.dataset.name.toLowerCase().includes(name)));
+    const kept = rows.filter(keep);
     const dir = sortDir === "asc" ? 1 : -1;
-    keep.sort((a, b) => {
+    kept.sort((a, b) => {
       const va = value(a, sortKey), vb = value(b, sortKey);
-      if (va === null && vb === null) return Number(b.dataset.poss) - Number(a.dataset.poss);
+      if (va === null && vb === null) return tie(a, b);
       if (va === null) return 1;
       if (vb === null) return -1;
       if (va < vb) return -dir;
       if (va > vb) return dir;
-      return Number(b.dataset.poss) - Number(a.dataset.poss);
+      return tie(a, b);
     });
     rows.forEach((r) => { r.hidden = true; });
-    keep.forEach((r, i) => { r.hidden = i >= shown; tbody.appendChild(r); });
+    kept.forEach((r, i) => { r.hidden = i >= shown; tbody.appendChild(r); });
     table.querySelectorAll("th button[data-sort]").forEach((b) => {
       const th = b.closest("th");
       if (b.dataset.sort === sortKey) th.setAttribute("aria-sort", sortDir === "asc" ? "ascending" : "descending");
       else th.removeAttribute("aria-sort");
     });
-    const count = controls?.querySelector(".mu-count");
-    if (count) count.textContent = `Showing ${Math.min(shown, keep.length)} of ${keep.length}`;
-    if (more) more.hidden = keep.length <= shown;
-    if (preset) preset.value = [...preset.options].some((o) => o.value === `${sortKey}:${sortDir}`) ? `${sortKey}:${sortDir}` : preset.value;
+    const count = document.querySelector(`.mu-count[data-count-for="${table.id}"]`) || controls?.querySelector(".mu-count");
+    if (count) count.textContent = kept.length ? `Showing ${Math.min(shown, kept.length)} of ${kept.length}` : "Nothing matches";
+    if (more) more.hidden = kept.length <= shown;
+    if (preset && [...preset.options].some((o) => o.value === `${sortKey}:${sortDir}`)) preset.value = `${sortKey}:${sortDir}`;
   }
 
   table.querySelectorAll("th button[data-sort]").forEach((button) => {
     button.addEventListener("click", () => {
       const key = button.dataset.sort;
-      // First click: names A-Z, numbers high to low; clicking again flips it.
-      sortDir = key === sortKey ? (sortDir === "asc" ? "desc" : "asc") : key === "name" ? "asc" : "desc";
+      // First click: text A-Z, numbers high to low (or low to high for data-sort-asc columns); again flips it.
+      const firstDir = button.hasAttribute("data-sort-asc") || ["name", "team"].includes(key) ? "asc" : "desc";
+      sortDir = key === sortKey ? (sortDir === "asc" ? "desc" : "asc") : firstDir;
       sortKey = key;
       shown = pageSize;
       apply();
     });
   });
   preset?.addEventListener("change", () => { [sortKey, sortDir] = preset.value.split(":"); shown = pageSize; apply(); });
-  controls?.querySelectorAll("select:not([data-sort-preset]), input").forEach((el) =>
+  all("select:not([data-sort-preset]), input").forEach((el) =>
     el.addEventListener("input", () => { shown = pageSize; apply(); }));
   more?.addEventListener("click", () => { shown += pageSize; apply(); });
   apply();
@@ -324,5 +420,35 @@ function initScenario() {
   });
   document.querySelectorAll("[data-scenario-remove]").forEach((button) => {
     button.addEventListener("click", () => { const map = current(); map.delete(button.dataset.scenarioRemove); submit(map); });
+  });
+}
+
+// Compare page: points per game by age for two players. careers: [[age, season, pts], ...]
+function drawCareerCompare(a, b, nameA, nameB) {
+  const css = getComputedStyle(document.documentElement);
+  const color = (name) => css.getPropertyValue(name).trim();
+  const points = (career) => career.filter((r) => r[0] !== null).map((r) => ({ x: Number(r[0]), y: r[2], season: r[1] }));
+  new Chart(document.getElementById("career-compare"), {
+    type: "line",
+    data: {
+      datasets: [
+        { label: nameA, data: points(a), borderColor: color("--series-1"), backgroundColor: color("--series-1"), borderWidth: 2, pointRadius: 3, tension: 0.25 },
+        { label: nameB, data: points(b), borderColor: color("--series-2"), backgroundColor: color("--series-2"), borderWidth: 2, pointRadius: 3, tension: 0.25 },
+      ],
+    },
+    options: {
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} pts at ${ctx.parsed.x} (${ctx.raw.season})` } },
+      },
+      scales: {
+        x: { type: "linear", title: { display: true, text: "Age", color: color("--text-2") }, grid: { display: false },
+             ticks: { color: color("--text-2"), stepSize: 1 }, border: { color: color("--axis") } },
+        y: { beginAtZero: true, title: { display: true, text: "Points per game", color: color("--text-2") },
+             grid: { color: color("--grid") }, ticks: { color: color("--text-2") }, border: { display: false } },
+      },
+    },
   });
 }

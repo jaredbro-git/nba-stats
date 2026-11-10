@@ -1,0 +1,11 @@
+{# A player's status on the NBA injury report: injury_badge(injury.get(player_id)). #}
+{% macro injury_badge(note) %}{% if note %}<span class="inj-badge inj-{{ note.status|lower }}" title="NBA injury report{% if note.reason %}: {{ note.reason }}{% endif %}">{{ note.status }}</span>{% if note.reason and note.status != "Available" %} <small class="muted">{{ note.reason }}</small>{% endif %}{% endif %}{% endmacro %}
+
+{# When the injury report was last read, with a button to look for a newer one. #}
+{% macro injury_line(st, back) %}
+<form method="post" action="/injuries/check" class="injury-line muted">
+  <input type="hidden" name="back" value="{{ back }}">
+  <span>{% if st.published %}NBA injury report: {{ st.published_et.strftime("%-I:%M %p") }} ET ({{ st.published.strftime("%a %-I:%M %p") }} NZ){% else %}NBA injury report not read yet{% endif %}{% if st.checked %} · checked {{ st.checked.strftime("%-I:%M %p") }}{% endif %}{% if st.error %} · <span class="bad">couldn't reach it</span>{% endif %}</span>
+  <button type="submit" class="secondary small">Check now</button>
+</form>
+{% endmacro %}

@@ -240,3 +240,35 @@ def closest_defender(season: str, max_age, category: str = "Overall") -> pd.Data
                                 "PLUSMINUS": "PCT_PLUSMINUS"})
         return [df[["CLOSE_DEF_PERSON_ID", "GP", "D_FGM", "D_FGA", "D_FG_PCT", "NORMAL_FG_PCT", "PCT_PLUSMINUS"]]]
     return fetch(f"{key}_{season}", request, max_age)[0]
+
+
+# --- Live scores ----------------------------------------------------------------
+# Kept in memory, not in the cache folder: anything written there makes the model rebuild and the phone
+# copy again.
+
+LIVE_SECONDS = 45
+_live: dict[str, tuple[float, dict]] = {}
+
+
+def scoreboard(us_date: str) -> dict[str, dict]:
+    """Scores and status for one US game day (ScoreboardV3), at most LIVE_SECONDS old: game id ->
+    {status, text, home, away}. Empty if stats.nba.com can't be reached."""
+    cached = _live.get(us_date)
+    if cached and time.time() - cached[0] < LIVE_SECONDS:
+        return cached[1]
+    global _last_request
+    try:
+        with _lock:
+            wait = _MIN_GAP - (time.monotonic() - _last_request)
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                games = E.ScoreboardV3(game_date=us_date, league_id="00", timeout=20).get_dict()["scoreboard"]["games"]
+            finally:
+                _last_request = time.monotonic()
+    except Exception:
+        return cached[1] if cached else {}
+    result = {g["gameId"]: {"status": g["gameStatus"], "text": g["gameStatusText"].strip(),
+                            "home": g["homeTeam"]["score"], "away": g["awayTeam"]["score"]} for g in games}
+    _live[us_date] = (time.time(), result)
+    return result

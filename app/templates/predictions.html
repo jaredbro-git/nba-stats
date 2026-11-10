@@ -56,48 +56,95 @@
   <section class="card">
     <h2>Coverage</h2>
     <p><b>{{ summary.games }}</b> finished game{{ "s" if summary.games != 1 }} scored{% if untracked %}, <b>{{ untracked }}</b> not tracked{% endif %}.</p>
-    <p class="muted">Predictions are saved while the app is open, for games starting in the next {{ ahead_hours }} hours, and refreshed
-      until tip-off. Games the app wasn't open for beforehand aren't tracked: they're never predicted after the fact.</p>
+    <p class="muted">{{ how_tracked }}</p>
   </section>
 </div>
 {% else %}
-<section class="card"><p class="muted">No finished games with a saved prediction yet{% if upcoming_rows %}: the first results come in after {{ upcoming_rows[0].start_local.strftime("%a %-d %b") }}{% endif %}.</p></section>
+<section class="card">
+  <p class="muted">No finished games with a saved prediction yet{% if upcoming_rows %}: the first results come in after {{ upcoming_rows[0].start_local.strftime("%a %-d %b") }}{% endif %}.</p>
+  {% if untracked %}<p><b>{{ untracked }}</b> finished game{{ "s" if untracked != 1 }} {{ "weren't" if untracked != 1 else "wasn't" }} tracked: the app wasn't open in the week before {{ "they" if untracked != 1 else "it" }} started.</p>{% endif %}
+  <p class="muted">{{ how_tracked }}</p>
+</section>
+{% endif %}
+
+{% macro row_data(r) %}data-href="/game/{{ r.game_id }}?from=predictions" data-start="{{ r.start }}" data-day="{{ r.start_local.strftime('%Y-%m-%d') }}"
+  data-teams="{% for t in (r.away_team, r.home_team) %}{{ t.abbreviation }} {{ t.full_name }} {{ t.nickname }} {% endfor %}"
+  data-fav="{{ (100 * [r.home_win, 1 - r.home_win]|max)|round(1) }}"{% endmacro %}
+
+{% if upcoming_rows or finished_rows %}
+<section class="card">
+  <h2>Find games</h2>
+  <div class="mu-controls" data-for="upcoming-table results-table">
+    <label>Team<input type="search" data-filter-text="teams" placeholder="e.g. Lakers, BOS"></label>
+    <label>Date
+      <select data-filter="day"><option value="">All dates</option>
+        {% for d in days %}<option value="{{ d.strftime('%Y-%m-%d') }}">{{ d.strftime("%a %-d %b") }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Favourite's chance
+      <select data-filter-min="fav"><option value="0">Any</option><option value="60">60%+</option><option value="70">70%+</option><option value="80">80%+</option></select>
+    </label>
+  </div>
+</section>
 {% endif %}
 
 {% if upcoming_rows %}
 <section class="card">
-  <h2>Upcoming <small class="muted">· saved predictions, updated until tip-off</small></h2>
+  <h2>Upcoming <small class="muted">· saved predictions, redone on every update until tip-off, then 🔒 locked in</small></h2>
+  <div class="mu-controls" data-for="upcoming-table"><span class="mu-count muted" aria-live="polite"></span></div>
   <div class="table-wrap">
-  <table>
-    <thead><tr><th>Start (NZ)</th><th>Game</th><th class="num">Predicted</th><th class="num">Home win</th><th class="num">Saved</th></tr></thead>
+  <table class="matchups" id="upcoming-table" data-sortable data-page="25" data-sort="start:asc" data-tiebreak="fav">
+    <thead><tr>
+      <th><button type="button" data-sort="start" data-sort-asc>Start (NZ)</button></th><th>Game</th><th class="num">Predicted</th>
+      <th class="num"><button type="button" data-sort="fav">Favourite</button></th><th class="num">Pick</th>
+    </tr></thead>
     <tbody>
     {% for r in upcoming_rows %}
-    <tr class="clickable" data-href="/game/{{ r.game_id }}">
+    {% set fav = r.home_team if r.home_win >= 0.5 else r.away_team %}
+    <tr class="clickable" {{ row_data(r) }}>
       <td>{{ r.start_local.strftime("%a %-d %b, %-I:%M %p") }}</td>
-      <td>{{ matchup(r) }}</td>
+      <td>{{ matchup(r) }}{% if r.source == 'iphone' %} <small class="muted" title="Saved by the iPhone app while this Mac was asleep">iPhone</small>{% endif %}</td>
       <td class="num">{{ r.away_pts|round|int }}–{{ r.home_pts|round|int }}</td>
-      <td class="num">{{ r.home_win|pct }}</td>
-      <td class="num muted">{{ r.logged_at[11:16] }} UTC</td>
+      <td class="num">{{ fav.abbreviation }} {{ [r.home_win, 1 - r.home_win]|max|pct }}</td>
+      <td class="num">{% if r.locked %}<span class="pick-state locked">🔒 Locked in</span>{% else %}<span class="pick-state open">Updating</span> <small class="muted">last {{ r.logged_local.strftime("%a %-I:%M %p") }}</small>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
+  <button type="button" class="secondary small mu-more" data-more-for="upcoming-table" hidden>Show more</button>
 </section>
 {% endif %}
 
 {% if finished_rows %}
 <section class="card">
   <h2>Results</h2>
+  <div class="mu-controls" data-for="results-table">
+    <label>Prediction
+      <select data-filter="outcome"><option value="">Right and wrong</option><option value="right">Right</option><option value="wrong">Wrong</option></select>
+    </label>
+    <label>Sort
+      <select data-sort-preset>
+        <option value="start:desc">Newest first</option><option value="start:asc">Oldest first</option>
+        <option value="miss:desc">Biggest margin miss</option><option value="miss:asc">Closest call</option>
+        <option value="fav:desc">Biggest favourite</option>
+      </select>
+    </label>
+    <span class="mu-count muted" aria-live="polite"></span>
+  </div>
   <div class="table-wrap">
-  <table>
-    <thead><tr><th>Date</th><th>Game</th><th class="num">Predicted</th><th class="num">Actual</th><th class="num">Favourite</th><th class="num">Margin miss</th><th></th></tr></thead>
+  <table class="matchups" id="results-table" data-sortable data-page="25" data-sort="start:desc" data-tiebreak="fav">
+    <thead><tr>
+      <th><button type="button" data-sort="start">Date</button></th><th>Game</th><th class="num">Predicted</th><th class="num">Actual</th>
+      <th class="num"><button type="button" data-sort="fav">Favourite</button></th>
+      <th class="num"><button type="button" data-sort="miss" title="How far the predicted margin was from the real one">Margin miss</button></th><th></th>
+    </tr></thead>
     <tbody>
     {% for r in finished_rows %}
     {% set fav = r.home_team if r.home_win >= 0.5 else r.away_team %}
-    <tr class="clickable" data-href="/game/{{ r.game_id }}">
+    <tr class="clickable" {{ row_data(r) }} data-outcome="{{ 'right' if r.correct else 'wrong' }}" data-miss="{{ r.margin_error|abs|round(1) }}">
       <td>{{ r.start_local.strftime("%a %-d %b") }}</td>
-      <td>{{ matchup(r) }}{% if r.backfilled %} <small class="muted">backfilled</small>{% endif %}</td>
+      <td>{{ matchup(r) }}{% if r.source == 'iphone' %} <small class="muted" title="Saved by the iPhone app while this Mac was asleep">iPhone</small>{% endif %}{% if r.backfilled %} <small class="muted">backfilled</small>{% endif %}</td>
       <td class="num">{{ r.away_pts|round|int }}–{{ r.home_pts|round|int }}</td>
       <td class="num"><b>{{ r.result.away }}–{{ r.result.home }}</b></td>
       <td class="num">{{ fav.abbreviation }} {{ [r.home_win, 1 - r.home_win]|max|pct }}</td>
@@ -108,6 +155,7 @@
     </tbody>
   </table>
   </div>
+  <button type="button" class="secondary small mu-more" data-more-for="results-table" hidden>Show more</button>
 </section>
 {% endif %}
 {% endblock %}

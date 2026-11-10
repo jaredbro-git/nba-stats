@@ -68,7 +68,7 @@
       <tbody>
       {% for r in s.rotation %}
       <tr class="{{ 'is-new' if not r.before and r.after else 'is-gone' if r.before and not r.after }}">
-        <td><a href="/player/{{ r.id }}">{{ r.name }}</a></td>
+        <td><a href="/players/{{ r.id }}">{{ r.name }}</a></td>
         <td class="num">{{ r.before|round|int if r.before else "–" }}</td>
         <td class="num">{{ r.after|round|int if r.after else "–" }}</td>
       </tr>
@@ -78,9 +78,10 @@
   </section>
   {% endfor %}
 </div>
-<p class="muted small-print">Ratings keep each team's starting point and count the traded players in full (like marking a player out, or in):
-  incoming players take minutes in the rotation and the team's rating moves by each player's estimated impact times his change in minutes.
-  Season odds come from {{ "{:,}" .format(10000) }} simulated seasons, with players on your unavailable list missing their next 10 games.</p>
+<p class="muted small-print">Ratings keep each team's starting point and count the traded players like marking a player out (or in):
+  incoming players take minutes in the rotation and the team's rating moves by half of each player's estimated impact times his change in minutes
+  (half is what predicted last season's games best).
+  Season odds come from {{ "{:,}" .format(10000) }} simulated seasons, with players on your unavailable list or out on the NBA injury report missing their next 10 games.</p>
 {% else %}
 <section class="card"><p class="muted">Tick at least one player and press <b>Run trade</b>.</p></section>
 {% endif %}

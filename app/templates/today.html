@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% from "_injury.html" import injury_line %}
+{% block title %}{{ "Today" if is_today else day.strftime("%a %-d %b") }} · NBA{% endblock %}
+{% block content %}
+<div class="section-head">
+  <div>
+    <h1 class="page-title">{{ "Today" if is_today else day.strftime("%A") }} <span class="muted">· {{ day.strftime("%A %-d %B") if is_today else day.strftime("%-d %B") }}</span></h1>
+    <p class="muted">Games on this day in NZ time{% if live_count %}, with live scores from stats.nba.com (updates every minute){% endif %}.</p>
+  </div>
+  <nav class="day-nav" aria-label="Other days">
+    {% if prev_day %}<a class="pill-link" href="/today?date={{ prev_day.isoformat() }}">‹ {{ prev_day.strftime("%a %-d %b") }}</a>{% endif %}
+    {% if not is_today %}<a class="pill-link" href="/today">Today</a>{% endif %}
+    {% if next_day %}<a class="pill-link" href="/today?date={{ next_day.isoformat() }}">{{ next_day.strftime("%a %-d %b") }} ›</a>{% endif %}
+  </nav>
+</div>
+{{ injury_line(injury_status, "/today" ~ ("?date=" ~ day.isoformat() if not is_today else "")) }}
+
+{% if cards %}
+<div class="tiles">
+  <div class="tile"><span class="tile-label">Games</span><span class="tile-value">{{ cards|length }}</span>
+    <span class="tile-sub">{% if live_count %}{{ live_count }} live now{% else %}{{ cards|selectattr("status", "equalto", 3)|list|length }} finished{% endif %}</span></div>
+  <div class="tile"><span class="tile-label">Picks right</span><span class="tile-value">{{ right }}{% if scored %}<small class="muted"> / {{ scored }}</small>{% endif %}</span>
+    <span class="tile-sub">{% if scored %}finished games with a saved pre-game prediction{% else %}none finished yet{% endif %}</span></div>
+  {% set waiting = cards|selectattr("status", "equalto", 1)|list %}
+  {% if waiting %}
+  <div class="tile"><span class="tile-label">Next tip-off</span><span class="tile-value">{{ (waiting|map(attribute="start")|min).strftime("%-I:%M %p") }}</span>
+    <span class="tile-sub">NZ time · {{ waiting|length }} game{{ "s" if waiting|length != 1 }} to come</span></div>
+  {% endif %}
+</div>
+
+<div class="game-cards">
+  {% for c in cards %}
+  {% set fav_home = c.home_win >= 0.5 %}
+  <a class="game-card card {{ 'is-live' if c.status == 2 }}" href="/game/{{ c.id }}?from=today">
+    <div class="gc-top">
+      {% if c.status == 2 %}<span class="status-pill live">● Live · {{ c.text }}</span>
+      {% elif c.status == 3 %}<span class="status-pill">Final</span>
+      {% else %}<span class="status-pill">{{ c.start.strftime("%-I:%M %p") }}</span>{% endif %}
+      <span class="muted gc-label">{% if c.kind == "pre" %}Preseason{% elif c.kind == "post" %}Playoffs{% endif %}{% if c.label %}{{ " · " if c.kind in ("pre", "post") }}{{ c.label }}{% endif %}</span>
+    </div>
+    {% for key in ("away", "home") %}
+    {% set side = c[key] %}
+    {% set won = c.status == 3 and (c.home_won if key == "home" else not c.home_won) %}
+    <div class="gc-team {{ 'won' if won }} {{ 'lost' if c.status == 3 and not won }}">
+      <img src="{{ logo(side.team.id) }}" alt="" class="logo-md" loading="lazy">
+      <span class="gc-name">{{ side.team.nickname }}<small class="muted">{{ side.record }}{% if side.old_record %} last season{% endif %}</small></span>
+      {% if c.status >= 2 %}<span class="gc-score">{{ side.score }}</span>
+      {% else %}<span class="gc-chance {{ 'fav' if (key == 'home') == fav_home }}">{{ (c.home_win if key == "home" else 1 - c.home_win)|pct }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    <div class="winprob thin" aria-hidden="true">
+      <span class="seg seg-away" style="width: {{ 100 * (1 - c.home_win) }}%"></span>
+      <span class="seg seg-home" style="width: {{ 100 * c.home_win }}%"></span>
+    </div>
+    <div class="gc-pred">
+      {% set fav = c.home if fav_home else c.away %}
+      <span>{% if c.source == "saved" %}Predicted before tip-off{% elif c.source == "untracked" %}Not tracked · model now says{% else %}Predicted{% endif %}:
+        <b>{{ c.away_pts|round|int }}–{{ c.home_pts|round|int }}</b>, {{ fav.team.abbreviation }} {{ [c.home_win, 1 - c.home_win]|max|pct }}</span>
+      {% if c.source == "saved" %}<span class="pick-state locked">🔒 Pick locked in at tip-off</span>
+      {% elif c.status == 1 and c.saved_at %}<span class="pick-state open">Pick saved · updates until tip-off ({{ c.start.strftime("%-I:%M %p") }}) · last {{ c.saved_at.strftime("%a %-I:%M %p") }}</span>
+      {% elif c.status == 1 %}<span class="pick-state open">Not saved yet · saved within 7 days of tip-off</span>{% endif %}
+      {% if c.status == 3 and c.source == "saved" %}
+      <span class="gc-verdict {{ 'good' if c.correct else 'bad' }}">{{ "✓ Right" if c.correct else "✗ Wrong" }} <small class="muted">· margin off by {{ "%.0f"|format(c.margin_miss|abs) }}</small></span>
+      {% endif %}
+    </div>
+    {% if c.away.out or c.home.out %}
+    <div class="gc-outs"><b>Out</b>
+      {% for key in ("away", "home") %}{% if c[key].out %}<span>{{ c[key].team.abbreviation }}: {{ c[key].out|join(", ") }}</span>{% endif %}{% endfor %}
+      {% if c.own_list %}<small class="muted">set for this game</small>{% endif %}
+    </div>
+    {% elif c.own_list %}<div class="gc-outs muted">Everyone available (set for this game)</div>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+<p class="muted small-print">Before tip-off, predictions use your latest data and who's out (open a game to set that for it alone). Once a game starts, the card
+  shows the prediction the Tracker saved before tip-off (🔒 locked in), which is what's scored. Picks are saved up to 7 days ahead and redone
+  on every update (new results, injury reports) until tip-off; games the app wasn't open for beforehand say "not tracked".</p>
+{% else %}
+<section class="card">
+  <p>No games {{ "today" if is_today else "on this day" }}.</p>
+  {% if next_day %}<p><a href="/today?date={{ next_day.isoformat() }}">Next games: {{ next_day.strftime("%A %-d %B") }} ›</a></p>{% endif %}
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<dialog id="game-popup" class="game-popup" aria-label="Game">
+  <div class="game-popup-bar">
+    <a data-full-page href="#" class="small-link">Open full page</a>
+    <button type="button" class="secondary small" data-close>Close</button>
+  </div>
+  <iframe title="Game" src="about:blank"></iframe>
+</dialog>
+<script src="/static/app.js?v={{ asset_version }}"></script>
+<script>
+  initGamePopups(".game-card");
+  {% if refresh %}
+  // Live scores: reload every minute while a game is on, but never while a game popup is open.
+  setInterval(() => { if (!document.getElementById("game-popup").open) window.location.reload(); }, 60000);
+  {% endif %}
+</script>
+{% endblock %}

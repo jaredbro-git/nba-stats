@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Mac's link server is plain HTTP on the home Wi-Fi (it only answers a paired phone with its token).
+     stats.nba.com is HTTPS. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

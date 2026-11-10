@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Phone · NBA{% endblock %}
+{# Refresh while a code is waiting or no phone is paired yet, so a new pairing code shows up by itself. #}
+{% block head %}{% if phone.pending or not phone.phones %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+<div class="section-head">
+  <div>
+    <h1 class="page-title">Phone</h1>
+    <p class="muted">The iPhone app copies its data from this Mac over Wi-Fi. Keep this app open and both on the same Wi-Fi.</p>
+  </div>
+</div>
+
+{% if phone.pending %}
+<section class="card pairing">
+  <h2>Pairing code</h2>
+  {% for r in phone.pending %}
+  <p>Type this into <b>{{ r.name }}</b>:</p>
+  <p class="pair-code">{{ r.code[:3] }} {{ r.code[3:] }}</p>
+  {% endfor %}
+  <p class="muted small-print">The code works for 5 minutes. This page refreshes by itself.</p>
+</section>
+{% endif %}
+
+<div class="grid">
+  <section class="card">
+    <h2>Paired phones</h2>
+    {% if phone.phones %}
+    <ul class="phone-list">
+      {% for p in phone.phones %}
+      <li>
+        <div><b>{{ p.name }}</b><br>
+          <small class="muted">{% if p.last_copy %}Last copied {{ ((now - p.last_copy) / 60)|round|int }} min ago{% else %}No copy since this app opened{% endif %}</small></div>
+        <form method="post" action="/phone/unpair"><input type="hidden" name="phone_id" value="{{ p.id }}">
+          <button type="submit" class="secondary small">Unpair</button></form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No phone paired yet. Open NBA Stats on your phone and tap <b>Pair with your Mac</b>; a code will appear here.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>Link</h2>
+    <p>{% if phone.running %}Listening on {{ phone.ip }}:{{ phone.port }}.{% else %}<span class="bad">Not running.</span>{% endif %}</p>
+    {% if phone.bundle.built_at %}<p class="muted">Phone data last prepared {{ ((now - phone.bundle.built_at) / 60)|round|int }} min ago. It's rebuilt when the data changes.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

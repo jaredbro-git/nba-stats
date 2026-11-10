@@ -3,7 +3,7 @@
 {% macro team_cell(side) %}<a href="/team/{{ side.team.abbreviation }}" class="team-inline"><img src="{{ logo(side.team.id) }}" alt="" class="logo-sm">{{ side.team.nickname }}</a>{% endmacro %}
 {% block content %}
 {% set away, home = sides[0], sides[1] %}
-<nav class="crumbs"><a href="/">Teams</a> / {{ team_cell(away) }} @ {{ team_cell(home) }}</nav>
+<nav class="crumbs">{% for label, href in trail or [("Teams", "/")] %}<a href="{{ href }}">{{ label }}</a> / {% endfor %}{{ away.team.nickname }} @ {{ home.team.nickname }}</nav>
 
 <p class="muted game-meta">
   {{ kind }}{% if game %}{% if game.gameSubLabel %} · {{ game.gameSubLabel }}{% endif %}
@@ -74,26 +74,47 @@
   </section>
 </div>
 
-<form id="out-form" class="out-bar card" method="post" action="/unavailable/save">
-  <p>Tick <b>Out</b> next to any player to see the prediction without him. His minutes go to teammates and the team rating moves by his estimated impact.</p>
+{% from "_injury.html" import injury_badge, injury_line %}
+{% macro names_of(ids) %}{% for pid in ids|sort %}{{ names[pid] }}{{ ", " if not loop.last }}{% endfor %}{% endmacro %}
+<form id="out-form" class="out-bar card" method="post" action="{{ '/game-outs' if game else '/unavailable/save' }}">
+  <h2>Who's out</h2>
+  <p>
+    {% if own_list %}<b>Set for this game:</b> {{ names_of(saved) if saved else "everyone available" }}.
+      {% if all_games_out != saved %}<span class="muted">(Your all-games list{% if all_games_out %} has {{ names_of(all_games_out) }}{% else %} is empty{% endif %}; this game ignores it.)</span>{% endif %}
+    {% elif saved %}{% if all_games_out %}<b>From your all-games list:</b> {{ names_of(all_games_out) }}.{% endif %}
+      {% if report_out - all_games_out %}<b>From the NBA injury report:</b> {% for pid in (report_out - all_games_out)|sort %}{{ names[pid] }} ({{ injury[pid].status|lower if injury.get(pid) else "out" }}){{ ", " if not loop.last }}{% endfor %}.{% endif %}
+    {% else %}Everyone is available.{% endif %}
+    {% set doubts = [] %}{% for pid in names|sort %}{% if injury.get(pid) and injury[pid].status in ("Questionable", "Probable") and pid not in saved %}{% if doubts.append(pid) %}{% endif %}{% endif %}{% endfor %}
+    {% if doubts %}<br><span class="muted">On the report but counted as playing: {% for pid in doubts %}{{ names[pid] }} ({{ injury[pid].status|lower }}){{ ", " if not loop.last }}{% endfor %}.</span>{% endif %}
+  </p>
+  {% if game and not own_list %}{{ injury_line(injury_status, request.url.path ~ ("?from=" ~ origin if origin else "")) }}{% endif %}
+  {% if out_changed %}<p class="banner">Previewing with {{ names_of(out) if out else "everyone available" }}: not saved, so the Tracker, Today page and phone still use the list above.</p>{% endif %}
+  <p class="muted small-print">Tick <b>Out</b> next to as many players as you like below, then choose what to do with them in the bar at the bottom of the window.
+    {% if game %}<b>Save for this game</b> changes the real prediction for this game only (the Tracker keeps updating it until tip-off); {% endif %}
+    <b>Save for all games</b> marks them out for every game until you mark them available again.
+    Their minutes go to teammates and the team rating moves by each player's estimated impact.
+    Players the NBA injury report lists as out or doubtful are ticked for you and come back when a later report clears them; to play one anyway, save this game's own list.</p>
+  {% if game %}<input type="hidden" name="game_id" value="{{ game.gameId }}"><input type="hidden" name="origin" value="{{ origin }}">{% endif %}
   <input type="hidden" name="team_ids" value="{{ away.team.id }},{{ home.team.id }}">
   <input type="hidden" name="out" value="{{ out|join(',') }}">
-  <input type="hidden" name="back" value="{{ request.url.path }}">
-  {% if out_changed %}
-  <div class="form-actions">
-    <button type="submit">Save as unavailable for all games</button>
-    <a href="{{ request.url.path }}{% if not game %}?home={{ home.team.abbreviation }}&away={{ away.team.abbreviation }}{% endif %}" class="small-link">Reset to saved list</a>
-    <span class="muted">Only this page is changed until you save.</span>
-  </div>
-  {% elif saved %}<p class="muted">{{ saved|length }} player{{ "s are" if saved|length != 1 else " is" }} marked unavailable from your saved list.</p>{% endif %}
+  <input type="hidden" name="auto" value="{{ report_out|join(',') }}">
+  <input type="hidden" name="back" value="{{ request.url.path }}{% if not game %}?home={{ home.team.abbreviation }}&away={{ away.team.abbreviation }}{% elif origin %}?from={{ origin }}{% endif %}">
+  {% if own_list %}<button type="submit" name="clear" value="1" class="secondary small" formnovalidate>Go back to the all-games list for this game</button>{% endif %}
 </form>
+<div id="out-dock" class="out-dock" hidden>
+  <span data-dock-text></span>
+  <button type="button" data-preview>Update prediction</button>
+  {% if game %}<button type="submit" form="out-form" formaction="/game-outs" data-save>Save for this game</button>{% endif %}
+  <button type="submit" form="out-form" formaction="/unavailable/save" class="secondary" data-save>Save for all games</button>
+  <button type="button" class="link-button" data-undo>Undo</button>
+</div>
 
 {% if p.matchups %}
 <section class="card matchups-card">
   <div class="section-head">
     <h2>Matchups</h2>
     {% if p.matchups.home.rows|selectattr("changed")|list or p.matchups.away.rows|selectattr("changed")|list %}
-    <a class="small-link" href="?{% if request.query_params.get('out') is not none %}out={{ request.query_params.get('out') }}{% endif %}{% if not game %}&home={{ home.team.abbreviation }}&away={{ away.team.abbreviation }}{% endif %}">Reset to likely matchups</a>
+    <a class="small-link" href="?{% if request.query_params.get('out') is not none %}out={{ request.query_params.get('out') }}{% endif %}{% if not game %}&home={{ home.team.abbreviation }}&away={{ away.team.abbreviation }}{% elif origin %}&from={{ origin }}{% endif %}">Reset to likely matchups</a>
     {% endif %}
   </div>
   <p class="muted">Each team's main scorers, with the defender most likely to guard them (whoever has guarded them most).
@@ -108,7 +129,7 @@
       {% for r in mu.rows %}
       <li class="mu-row {{ 'is-changed' if r.changed }}">
         <div class="mu-top">
-          <a href="/player/{{ r.shooter.id }}" class="mu-name">{{ r.shooter.name }}</a>
+          <a href="/players/{{ r.shooter.id }}" class="mu-name">{{ r.shooter.name }}</a>
           <span class="num"><b>{{ "%.1f"|format(r.pts) }}</b> pts{% if r.changed and r.change|abs >= 0.05 %} <span class="{{ 'good' if r.change > 0 else 'bad' }}">({{ r.change|signed }})</span>{% endif %}</span>
         </div>
         <label class="mu-select">Guarded by
@@ -154,7 +175,7 @@
       {% for line in side.players %}
       <tr>
         <td><input type="checkbox" class="out-toggle" value="{{ line.player.id }}" aria-label="{{ line.player.name }} out"></td>
-        <td><a href="/player/{{ line.player.id }}">{{ line.player.name }}</a></td>
+        <td><a href="/players/{{ line.player.id }}">{{ line.player.name }}</a> {{ injury_badge(injury.get(line.player.id)) }}</td>
         <td class="num">{{ line.MIN|round|int }}</td>
         <td class="num"><b>{{ "%.1f"|format(line.PTS) }}</b></td>
         <td class="num">{{ "%.1f"|format(line.REB) }}</td>
@@ -168,7 +189,7 @@
       {% set is_out = pl.id in out %}
       <tr class="{{ 'is-out' if is_out else 'bench' }}">
         <td><input type="checkbox" class="out-toggle" value="{{ pl.id }}" {% if is_out %}checked{% endif %} aria-label="{{ pl.name }} out"></td>
-        <td><a href="/player/{{ pl.id }}">{{ pl.name }}</a> <small class="muted">{{ "Out" if is_out else "Outside the rotation" }}</small></td>
+        <td><a href="/players/{{ pl.id }}">{{ pl.name }}</a> {% if injury.get(pl.id) %}{{ injury_badge(injury.get(pl.id)) }}{% else %}<small class="muted">{{ "Out" if is_out else "Outside the rotation" }}</small>{% endif %}</td>
         <td class="num" colspan="7"></td>
       </tr>
       {% endfor %}
@@ -206,7 +227,7 @@
         <thead><tr><th>Player</th><th class="num">MIN</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">3PM</th><th class="num">+/−</th></tr></thead>
         <tbody>
         {% for r in box.get(side.team.id, []) %}
-        <tr><td><a href="/player/{{ r.PLAYER_ID }}">{{ r.PLAYER_NAME }}</a></td><td class="num">{{ r.MIN }}</td><td class="num"><b>{{ r.PTS }}</b></td><td class="num">{{ r.REB }}</td><td class="num">{{ r.AST }}</td><td class="num">{{ r.FG3M }}</td><td class="num">{{ r.PLUS_MINUS|signed(0) if r.PLUS_MINUS is not none else "–" }}</td></tr>
+        <tr><td><a href="/players/{{ r.PLAYER_ID }}">{{ r.PLAYER_NAME }}</a></td><td class="num">{{ r.MIN }}</td><td class="num"><b>{{ r.PTS }}</b></td><td class="num">{{ r.REB }}</td><td class="num">{{ r.AST }}</td><td class="num">{{ r.FG3M }}</td><td class="num">{{ r.PLUS_MINUS|signed(0) if r.PLUS_MINUS is not none else "–" }}</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -233,4 +254,4 @@
 <dialog class="matchup-dialog" id="matchup-dialog" aria-label="Matchup"></dialog>
 {% endblock %}
 {% block scripts %}<script src="/static/app.js?v={{ asset_version }}"></script>
-<script>initOutToggles({{ out|list|tojson }}); initMatchupSelects();</script>{% endblock %}
+<script>initOutDock({{ out|list|tojson }}, {{ saved|list|tojson }}, true); initMatchupSelects();</script>{% endblock %}

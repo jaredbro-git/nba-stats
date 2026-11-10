@@ -27,7 +27,7 @@
   <ul class="scenario-list">
     {% for r in scenario %}
     <li>
-      <a href="/player/{{ r.id }}">{{ r.name }}</a>{% if r.player and r.player.team_id %} <small class="muted">{{ lg.teams[r.player.team_id].abbreviation }}</small>{% endif %}
+      <a href="/players/{{ r.id }}">{{ r.name }}</a>{% if r.player and r.player.team_id %} <small class="muted">{{ lg.teams[r.player.team_id].abbreviation }}</small>{% endif %}
       <select class="scenario-games" data-player="{{ r.id }}" aria-label="Games {{ r.name }} misses">
         {% for value, label in choices %}<option value="{{ value if value else 'rest' }}" {% if value == r.games %}selected{% endif %}>misses {{ label|lower }}</option>{% endfor %}
       </select>

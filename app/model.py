@@ -31,19 +31,51 @@ SCORING_STATS = {"PTS", "AST", "FG3M"}
 PREV_WEIGHT = 0.6        # last season's games count 60% as much as this season's for player rates
 REGRESS = 0.75           # keep 75% of last season's team rating, relative to league average
 CUR_HALF_GAMES = 15      # this season's team ratings get half the weight after this many games
-IMPACT_SHRINK_MIN = 1500 # minutes of evidence that would justify half of an on/off split
-# Calibrated on last season: teams' real with/without splits for 117 regular players moved
-# about 2.7x the unscaled estimate; 1.4 stays a little conservative.
-IMPACT_SCALE = 1.4
+# Player impact (on/off splits). Fitted out of sample (tools/fit_impacts.py: predict each player's on/off in
+# 2023-24, 2024-25 and 2025-26 from the seasons before plus his experience; 13% less error than before):
+# a player's split counts in full only with plenty of evidence, and with little evidence he's assumed to be
+# like others with his experience (rookies and fringe veterans play below average).
+IMPACT_SEASONS = 4        # this season and the three before it...
+IMPACT_DECAY = 0.6        # ...each counting 0.6x as much as the season after it
+IMPACT_HALF_TRUST = 1400  # on/off minutes of evidence (decayed) before his own split gets half the weight
+FRINGE_MINUTES = 600      # a veteran with fewer on-court minutes than this last season is a fringe player
+# Where a player starts with no evidence of his own, per 100 possessions: (offence, defence).
+IMPACT_PRIORS = {
+    "rookie": (-2.96, 1.12),
+    "second season": (-2.46, 1.57),
+    "third season": (-0.90, 1.62),
+    "fringe veteran": (-3.66, 1.98),
+    "regular veteran": (0.59, -0.19),
+}
+# Calibrated against 2025-26 teams' real with/without net rating for 205 regulars who missed 5+ games (tools/fit_impact_scale.py):
+# keeps real splits moving the same multiple of the estimate as the 1.4 calibrated for the previous, looser rule.
+IMPACT_SCALE = 2.1
 IMPACT_CAP = 10.0         # per 100 possessions, each of offence and defence
 # Roster and minutes changes since last season are damped: a full-strength rotation is
 # optimistic (players miss games) and part of each player's value is already in the team rating.
 ROSTER_WEIGHT = 0.35
+# Absences (tools/fit_absences.py, every 2025-26 game predicted from what was known before it, with who actually sat):
+# a missing player counts at half his estimated impact, and this season's absences that are already in the team's
+# rating are credited back at 0.8 instead of ROSTER_WEIGHT, so a long absence isn't taken off twice. Brier 0.2007 vs
+# 0.2138 with the old rule (1 and 0.35), which was worse than ignoring absences (0.2054).
+ABSENCE_WEIGHT = 0.5
+CUR_ROSTER_WEIGHT = 0.8
 MARGIN_SD = 13.0         # spread of real NBA margins around a prediction
 B2B_PENALTY = 1.5        # points of margin lost on the second night of a back-to-back
 ROTATION_SIZE = 10
 MAX_MINUTES = 40.0
 GAME_TYPES = {"002": "Regular season", "004": "Playoffs", "005": "Play-in", "006": "NBA Cup final"}
+
+
+def _experience(exp) -> int | None:
+    """The roster's EXP column: "R" for rookies, else seasons played before this one."""
+    text = str(exp).strip()
+    if text == "R":
+        return 0
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
 
 
 def _poss(df: pd.DataFrame) -> pd.Series:
@@ -83,6 +115,7 @@ class Player:
     age: float | None = None
     height: float | None = None  # inches
     how_acquired: str = ""
+    experience: int | None = None  # NBA seasons before this one (0 = rookie), from the roster
     mpg: float = 0.0             # expected minutes when available (before rotation scaling)
     rates: dict = field(default_factory=dict)   # per minute
     impact_off: float = 0.0      # per 100 possessions on court
@@ -93,6 +126,17 @@ class Player:
     @property
     def impact(self) -> float:
         return self.impact_off + self.impact_def
+
+
+def _by_player(rows: pd.DataFrame) -> pd.DataFrame:
+    """On/off rows indexed by player, one row each. The API sometimes splits a player over two rows (e.g. his
+    name spelled with and without an accent), so minutes are added up and ratings averaged by minutes."""
+    if not rows["VS_PLAYER_ID"].duplicated().any():
+        return rows.set_index("VS_PLAYER_ID")
+    rows = rows.assign(_o=rows["OFF_RATING"] * rows["MIN"], _d=rows["DEF_RATING"] * rows["MIN"])
+    g = rows.groupby("VS_PLAYER_ID")[["MIN", "_o", "_d"]].sum()
+    mins = g["MIN"].where(g["MIN"] > 0)
+    return pd.DataFrame({"MIN": g["MIN"], "OFF_RATING": g["_o"] / mins, "DEF_RATING": g["_d"] / mins})
 
 
 class League:
@@ -202,6 +246,7 @@ class League:
                     id=r.PLAYER_ID, name=r.PLAYER, team_id=tid,
                     position=r.POSITION or "", number=str(r.NUM or "").removesuffix(".0") if r.NUM == r.NUM else "",
                     age=r.AGE, how_acquired=r.HOW_ACQUIRED or "", height=_inches(r.HEIGHT),
+                    experience=_experience(getattr(r, "EXP", None)),
                 )
 
         # Season totals and per-game averages.
@@ -247,36 +292,60 @@ class League:
             return 24 if pick <= 5 else 18 if pick <= 14 else 12 if pick <= 30 else 8
         return 8
 
+    def impact_seasons(self) -> list[tuple[str, float]]:
+        """The seasons whose on/off splits count, with their weights (this season first)."""
+        start = int(self.cur[:4])
+        return [(config.season_label(start - back), IMPACT_DECAY ** back) for back in range(IMPACT_SEASONS)]
+
+    @staticmethod
+    def impact_group(pl: "Player", last_season_minutes: float) -> str:
+        if pl.experience == 0:
+            return "rookie"
+        if pl.experience == 1:
+            return "second season"
+        if pl.experience == 2:
+            return "third season"
+        return "fringe veteran" if last_season_minutes < FRINGE_MINUTES else "regular veteran"
+
     def _build_impacts(self):
-        acc: dict[int, list[float]] = {}  # pid -> [weight, off*weight, def*weight, on_min, off_min]
-        for season, weight in ((self.cur, 1.0), (self.prev, PREV_WEIGHT)):
+        """Each player's impact per 100 possessions on court: his on/off splits (this season and the three
+        before, decayed), pulled towards the usual level for his experience in proportion to how little
+        evidence there is."""
+        acc: dict[int, list[float]] = {}  # pid -> [evidence, off*evidence, def*evidence]
+        last_minutes: dict[int, float] = {}  # on-court minutes last season
+        for season, weight in self.impact_seasons():
+            per_player: dict[int, list[float]] = {}  # this season: [on_min, off_min, off*on_min, def*on_min]
             for tid in self.teams:
                 frames = nba.load(f"onoff_{tid}_{season}")
                 if not frames or frames[0].empty:
                     continue
                 df = frames[0]
-                on = df[df["COURT_STATUS"] == "On"].set_index("VS_PLAYER_ID")
-                off = df[df["COURT_STATUS"] == "Off"].set_index("VS_PLAYER_ID")
+                on, off = _by_player(df[df["COURT_STATUS"] == "On"]), _by_player(df[df["COURT_STATUS"] == "Off"])
                 for pid in on.index.intersection(off.index):
                     a, b = on.loc[pid], off.loc[pid]
                     if a["MIN"] <= 0 or b["MIN"] <= 0:
                         continue
-                    w = weight * a["MIN"]
-                    s = acc.setdefault(pid, [0.0, 0.0, 0.0, 0.0, 0.0])
-                    s[0] += w
-                    s[1] += w * (a["OFF_RATING"] - b["OFF_RATING"])
-                    s[2] += w * (b["DEF_RATING"] - a["DEF_RATING"])
-                    s[3] += weight * a["MIN"]
-                    s[4] += weight * b["MIN"]
-        for pid, (w, o, d, on_min, off_min) in acc.items():
-            pl = self.players.get(pid)
-            if pl is None:
-                continue
-            # Evidence is limited by whichever of on/off minutes is smaller.
-            n = 1 / (1 / on_min + 1 / off_min)
-            k = IMPACT_SCALE * n / (n + IMPACT_SHRINK_MIN / 4)
-            pl.impact_off = max(-IMPACT_CAP, min(IMPACT_CAP, k * o / w))
-            pl.impact_def = max(-IMPACT_CAP, min(IMPACT_CAP, k * d / w))
+                    s = per_player.setdefault(pid, [0.0, 0.0, 0.0, 0.0])
+                    s[0] += a["MIN"]
+                    s[1] += b["MIN"]
+                    s[2] += a["MIN"] * (a["OFF_RATING"] - b["OFF_RATING"])
+                    s[3] += a["MIN"] * (b["DEF_RATING"] - a["DEF_RATING"])
+            for pid, (on_min, off_min, o, d) in per_player.items():
+                # Evidence is limited by whichever of on/off minutes is smaller.
+                n = weight / (1 / on_min + 1 / off_min)
+                s = acc.setdefault(pid, [0.0, 0.0, 0.0])
+                s[0] += n
+                s[1] += n * o / on_min
+                s[2] += n * d / on_min
+                if season == self.prev:
+                    last_minutes[pid] = on_min
+        for pl in self.players.values():
+            n, o, d = acc.get(pl.id, (0.0, 0.0, 0.0))
+            prior_off, prior_def = IMPACT_PRIORS[self.impact_group(pl, last_minutes.get(pl.id, 0.0))]
+            k = n / (n + IMPACT_HALF_TRUST)
+            own_off, own_def = (o / n, d / n) if n else (0.0, 0.0)
+            pl.impact_off = max(-IMPACT_CAP, min(IMPACT_CAP, IMPACT_SCALE * (k * own_off + (1 - k) * prior_off)))
+            pl.impact_def = max(-IMPACT_CAP, min(IMPACT_CAP, IMPACT_SCALE * (k * own_def + (1 - k) * prior_def)))
 
     def _schedule(self) -> pd.DataFrame:
         """Regular season and postseason games. Every game, preseason included, is in self.all_games."""
@@ -371,6 +440,10 @@ class League:
         prev = from_season(self.prev, REGRESS) or {"off": 0, "def": 0, "pace": 0, "adj_off": 0, "adj_def": 0}
         cur = from_season(self.cur, 1.0) if w > 0 else None
         parts = prev if cur is None else {k: w * cur[k] + (1 - w) * prev[k] for k in prev}
+        # The roster/minutes adjustment, already weighted: changes since last season count at ROSTER_WEIGHT,
+        # this season's (mostly players who've missed games) at CUR_ROSTER_WEIGHT.
+        for k in ("adj_off", "adj_def"):
+            parts[k] = ROSTER_WEIGHT * (1 - w) * prev[k] + (CUR_ROSTER_WEIGHT * w * cur[k] if cur else 0.0)
         parts["cur_weight"] = w
         self._full_cache[team_id] = parts
         return parts
@@ -379,16 +452,17 @@ class League:
         """Projected ratings relative to league average, with the parts that make them up."""
         parts = self._full_strength(team_id)
         mins = self.rotation(team_id, out)
-        # Roster and minutes changes since the rated season count at ROSTER_WEIGHT, centred on
-        # the league average; players marked out count in full.
-        roster_off = ROSTER_WEIGHT * (parts["adj_off"] - self._offset["adj_off"])
-        roster_def = ROSTER_WEIGHT * (parts["adj_def"] - self._offset["adj_def"])
+        # Roster and minutes changes since the rated seasons (weighted in _full_strength), centred on the league
+        # average; players marked out count at ABSENCE_WEIGHT.
+        roster_off = parts["adj_off"] - self._offset["adj_off"]
+        roster_def = parts["adj_def"] - self._offset["adj_def"]
         # After a trade (see with_trade), changes are measured from the team's pre-trade rotation, so
         # players traded in or out count in full, like players marked out.
         before_trade = self.__dict__.get("_pretrade_rotation", {}).get(team_id)
         healthy = before_trade or {pid: m / 48 for pid, m in self.rotation(team_id, set()).items()}
         changed = out or before_trade is not None
         out_off, out_def = self._impact_change(healthy, {pid: m / 48 for pid, m in mins.items()}) if changed else (0.0, 0.0)
+        out_off, out_def = ABSENCE_WEIGHT * out_off, ABSENCE_WEIGHT * out_def
         return {
             "off": parts["off"] + roster_off + out_off,
             "def": parts["def"] + roster_def + out_def,

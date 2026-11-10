@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% from "_shotchart.html" import shot_chart with context %}
+{% from "_playersearch.html" import player_search %}
+{% block title %}Compare players · NBA{% endblock %}
+{% block head %}<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>{% endblock %}
+{% macro better(a, b, lower=False) %}{% if a is not none and b is not none and a != b %}{{ 'win' if (a > b) != lower else '' }}{% endif %}{% endmacro %}
+{% macro row(label, key, fmt="%.1f", lower=False, pct=False) %}
+{% set A = sides[0].summary[key] if sides[0] and sides[0].summary else none %}
+{% set B = sides[1].summary[key] if sides[1] and sides[1].summary else none %}
+<tr>
+  <td class="num {{ better(A, B, lower) }}">{% if A is none %}–{% elif pct %}{{ A|pct(1) }}{% else %}{{ fmt|format(A) }}{% endif %}</td>
+  <th scope="row">{{ label }}</th>
+  <td class="num {{ better(B, A, lower) }}">{% if B is none %}–{% elif pct %}{{ B|pct(1) }}{% else %}{{ fmt|format(B) }}{% endif %}</td>
+</tr>
+{% endmacro %}
+{% block content %}
+<nav class="crumbs"><a href="/players">Players</a> / Compare</nav>
+
+<div class="compare-head">
+  {% for side, slot in [(sides[0], "a"), (sides[1], "b")] %}
+  <div class="compare-player compare-{{ slot }}">
+    {% if side %}
+    <img src="{{ headshot(side.id) }}" alt="" class="headshot" onerror="this.style.visibility='hidden'">
+    <div>
+      <h1><a href="/players/{{ side.id }}">{{ side.info.DISPLAY_FIRST_LAST }}</a></h1>
+      <p class="muted">{% if side.summary and side.summary.team %}{{ side.summary.team.full_name }} · {% endif %}{{ side.info.POSITION }}{% if side.info.HEIGHT %} · {{ height(side.info.HEIGHT) }}{% endif %}{% if side.summary and side.summary.age %} · {{ side.summary.age|int }}{% endif %}</p>
+    </div>
+    {% endif %}
+    {{ player_search("Change player" if side else "Pick a player", "Any player", slot=slot) }}
+  </div>
+  {% if loop.first %}<div class="compare-vs">vs</div>{% endif %}
+  {% endfor %}
+</div>
+
+{% if sides[0] and sides[1] %}
+<div class="grid">
+  <section class="card">
+    <h2>Numbers <small class="muted">· {{ sides[0].summary.season if sides[0].summary else "" }}{% if sides[1].summary and sides[1].summary.season != sides[0].summary.season %} / {{ sides[1].summary.season }}{% endif %}</small></h2>
+    {% if sides[0].summary and sides[1].summary %}
+    <table class="compare-table">
+      <thead><tr><th class="num"><i class="swatch seg-away"></i>{{ sides[0].summary.name }}</th><th></th><th class="num"><i class="swatch seg-home"></i>{{ sides[1].summary.name }}</th></tr></thead>
+      <tbody>
+        {{ row("Minutes", "mpg") }}{{ row("Points", "PTS") }}{{ row("Rebounds", "REB") }}{{ row("Assists", "AST") }}
+        {{ row("Threes made", "FG3M") }}{{ row("Steals", "STL") }}{{ row("Blocks", "BLK") }}{{ row("Turnovers", "TOV", lower=True) }}
+        {{ row("True shooting", "ts", pct=True) }}{{ row("Usage", "usg", pct=True) }}{{ row("Assist rate", "ast_pct", pct=True) }}
+        {{ row("Impact (net per 100)", "impact", "%+.1f") }}{{ row("Offensive impact", "impact_off", "%+.1f") }}{{ row("Defensive impact", "impact_def", "%+.1f") }}
+        {{ row("Matchup defense", "def_rating", "%+.1f", lower=True) }}
+      </tbody>
+    </table>
+    <p class="muted small-print">Per game unless marked. The better number in each row is highlighted. Matchup defense: lower is better.</p>
+    {% else %}<p class="muted">One of them has no recent NBA stats: comparison needs both to have played in the last two seasons.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Playstyle</h2>
+    <div class="compare-cols">
+      {% for side in sides %}
+      <div>
+        <h3>{{ side.info.DISPLAY_FIRST_LAST }}</h3>
+        {% if side.data.summary %}<p>{{ side.data.summary }}</p>{% endif %}
+        <ul class="traits">{% for t in side.data.traits %}<li><b>{{ t.label }}</b><span class="muted">{{ t.detail }}</span></li>{% else %}<li class="muted">No standout traits.</li>{% endfor %}</ul>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+{% if h2h %}
+<section class="card">
+  <h2>Head to head</h2>
+  <div class="compare-cols">
+    {% for hist, est, shooter, defender in [(h2h.a_vs_b, h2h.est_ab, sides[0], sides[1]), (h2h.b_vs_a, h2h.est_ba, sides[1], sides[0])] %}
+    <div class="h2h">
+      <h3>{{ shooter.info.DISPLAY_FIRST_LAST }} guarded by {{ defender.info.DISPLAY_FIRST_LAST }}</h3>
+      {% if hist %}
+      <p>{{ hist.MATCHUP_FGM|int }}/{{ hist.MATCHUP_FGA|int }} FG, {{ hist.MATCHUP_FG3M|int }}/{{ hist.MATCHUP_FG3A|int }} 3P, {{ hist.PLAYER_PTS|int }} pts on {{ hist.PARTIAL_POSS|round|int }} possessions in {{ hist.GP|int }} games.</p>
+      {% else %}<p class="muted">They've never matched up this way (tracked since 2017-18).</p>{% endif %}
+      {% if est %}<p>Expected: <b>{{ "%.1f"|format(est.pts100) }}</b> points per 100 possessions ({{ est.effect100|signed }} vs his usual), {{ est.fg|pct(1) }} FG.</p>{% endif %}
+      <button type="button" class="secondary small" data-matchup-open="{{ shooter.id }}:{{ defender.id }}">Full matchup</button>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Points per game by age</h2>
+  <div class="chart"><canvas id="career-compare" aria-label="Points per game by age for both players"></canvas></div>
+  <div class="line-legend">
+    <span><i class="swatch seg-away"></i>{{ sides[0].info.DISPLAY_FIRST_LAST }}</span>
+    <span><i class="swatch seg-home"></i>{{ sides[1].info.DISPLAY_FIRST_LAST }}</span>
+  </div>
+</section>
+
+<div class="grid">
+  {% for side in sides %}
+  <section class="card">
+    <h2>{{ side.info.DISPLAY_FIRST_LAST }} <small class="muted">· shots, {{ side.chart_season or "no shot data" }}</small></h2>
+    {% if side.chart %}{{ shot_chart(side.chart) }}{% else %}<p class="muted">No shot data.</p>{% endif %}
+  </section>
+  {% endfor %}
+</div>
+<dialog class="matchup-dialog" id="matchup-dialog" aria-label="Matchup"></dialog>
+{% else %}
+<section class="card"><p class="muted">Pick two players to compare.</p></section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_version }}"></script>
+<script>
+  window.onSlotPicked = (slot, p) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set(slot, p.id);
+    window.location.search = params.toString();
+  };
+  {% if sides[0] and sides[1] %}
+  drawCareerCompare({{ sides[0].career|tojson }}, {{ sides[1].career|tojson }},
+    {{ sides[0].info.DISPLAY_FIRST_LAST|tojson }}, {{ sides[1].info.DISPLAY_FIRST_LAST|tojson }});
+  {% endif %}
+</script>
+{% endblock %}

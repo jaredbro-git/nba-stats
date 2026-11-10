@@ -4,7 +4,7 @@
 {% block title %}{{ info.DISPLAY_FIRST_LAST or "Player" }} · NBA{% endblock %}
 {% block head %}{% if career_job %}<meta http-equiv="refresh" content="3">{% endif %}<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>{% endblock %}
 {% block content %}
-<nav class="crumbs"><a href="/">Teams</a>{% if team %} / <a href="/team/{{ team.abbreviation }}">{{ team.full_name }}</a>{% endif %} / {{ info.DISPLAY_FIRST_LAST }}</nav>
+<nav class="crumbs"><a href="/players">Players</a> / {{ info.DISPLAY_FIRST_LAST }}</nav>
 
 <header class="player-head">
   <img src="{{ headshot(info.PERSON_ID) }}" alt="" class="headshot" onerror="this.style.visibility='hidden'">
@@ -61,6 +61,26 @@
     {% endif %}
   </section>
   {% endif %}
+
+  <section class="card">
+    <h2>Plays like{% if similar_season %} <small class="muted">· {{ similar_season }}</small>{% endif %}</h2>
+    {% if similar %}
+    <ol class="similar">
+      {% for r in similar %}
+      <li>
+        <a href="/players/{{ r.id }}">{{ r.name }}</a>{% if r.team %} <small class="muted">{{ r.team }}</small>{% endif %}
+        <span class="match" style="--m: {{ (100 * r.match)|round }}%">{{ (100 * r.match)|round|int }}% match</span>
+        <a class="small-link" href="/players/compare?a={{ info.PERSON_ID }}&b={{ r.id }}">Compare</a>
+      </li>
+      {% endfor %}
+    </ol>
+    <p class="muted small-print">Players whose game looks most like his: where their shots come from, usage, playmaking, efficiency,
+      rebounding, blocks and steals, each compared across rotation players.</p>
+    {% else %}<p class="muted">Not enough minutes to compare his game with others.</p>{% endif %}
+    <div class="compare-with">
+      {{ player_search("Compare with…", "Any player", slot="compare") }}
+    </div>
+  </section>
 
   <section class="card">
     <h2>Teams</h2>
@@ -134,15 +154,15 @@
       </select>
     </label>
     <label>Min. possessions
-      <select data-min-poss>
+      <select data-filter-min="poss">
         <option value="0">Any</option><option value="10">10+</option><option value="25" {% if not opponent_team %}selected{% endif %}>25+</option>
         <option value="50">50+</option><option value="100">100+</option><option value="200">200+</option>
       </select>
     </label>
     <label>Position
-      <select data-group><option value="">All</option><option value="guard">Guards</option><option value="wing">Wings</option><option value="big">Bigs</option></select>
+      <select data-filter="group"><option value="">All</option><option value="guard">Guards</option><option value="wing">Wings</option><option value="big">Bigs</option></select>
     </label>
-    <label>Name<input type="search" data-name-filter placeholder="Filter"></label>
+    <label>Name<input type="search" data-filter-text="name" placeholder="Filter"></label>
     <label class="mu-check"><input type="checkbox" data-hide-never {% if not opponent_team %}checked{% endif %}> Hide never faced</label>
     <span class="mu-count muted" aria-live="polite"></span>
     {% if not opponent_team %}<small class="muted mu-note">Head-to-heads under 5 possessions aren't listed; pick a team above to see its whole roster.</small>{% endif %}
@@ -278,6 +298,7 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/app.js?v={{ asset_version }}"></script>
+<script>window.onSlotPicked = (slot, p) => { window.location.href = `/players/compare?a={{ info.PERSON_ID }}&b=${p.id}`; };</script>
 {% if regular|length > 1 %}
 <script>
   drawCareer({{ regular|map(attribute="SEASON_ID")|list|tojson }}, {{ regular|map(attribute="TEAM_ABBREVIATION")|list|tojson }},

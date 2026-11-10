@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Bonjour: the Mac app announces itself as _nbastats._tcp (app/phone.py). -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nbastats._tcp</string>
+	</array>
+	<!-- Background refresh (Reminders.refreshTask): scores, results, the injury report and picks while the app is closed. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>nz.jaredbro.nbastats.refresh</string>
+	</array>
+	<!-- The Mac's sharing server is plain HTTP on the home Wi-Fi (paired phones only, with a token). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

@@ -191,3 +191,54 @@ def profile(lg: League, pid: int) -> dict:
 def _short_pos(position: str) -> str:
     return {"Guard": "G", "Forward": "F", "Center": "C", "Guard-Forward": "G-F", "Forward-Guard": "F-G",
             "Forward-Center": "F-C", "Center-Forward": "C-F"}.get(position, "")
+
+
+# --- Season tables and similar players ----------------------------------------------
+
+_tables: dict = {}
+
+
+def season_table(lg: League, season: str) -> pd.DataFrame:
+    """_season_table, cached for this build of the league."""
+    key = (id(lg), season)
+    if key not in _tables:
+        if len(_tables) > 6:
+            _tables.clear()
+        _tables[key] = _season_table(lg, season) if not lg.plogs[season].empty else pd.DataFrame()
+    return _tables[key]
+
+
+# What a player's game looks like, for "plays like": where his shots come from, how much he creates,
+# shoots, rebounds and defends. Each is compared in standard deviations across rotation players.
+SIMILAR_FEATURES = ["USG_PCT", "AST_PCT", "TS_PCT", "OREB_PCT", "DREB_PCT", "FTR", "FG3A36", "BLK36", "STL36", "PTS36"]
+
+
+def similar(lg: League, pid: int, n: int = 6) -> tuple[str | None, list[dict]]:
+    """The n players whose game looks most like his (same season), as a 0-100 match."""
+    season = _season_for(lg, pid)
+    if not season:
+        return None, []
+    table = season_table(lg, season)
+    if table.empty or pid not in table.index or table.loc[pid, "MIN"] < QUALIFY_MIN / 2:
+        return season, []
+    pool = table[(table["MIN"] >= QUALIFY_MIN) | (table.index == pid)].copy()
+    pool["PTS36"] = 36 * pool["PTS"] / pool["MIN"]
+    zone_fga = [f"{key} FGA" for key, _ in ZONES if f"{key} FGA" in pool]
+    shots = pool[zone_fga].sum(axis=1).replace(0, float("nan"))
+    features = list(SIMILAR_FEATURES)
+    for col in zone_fga:
+        pool[f"SHARE {col}"] = pool[col] / shots
+        features.append(f"SHARE {col}")
+    features = [f for f in features if f in pool]
+    x = pool[features].astype(float)
+    z = ((x - x.mean()) / x.std()).fillna(0.0)
+    target = z.loc[pid]
+    norms = (z ** 2).sum(axis=1) ** 0.5
+    cosine = (z @ target) / (norms * float((target ** 2).sum() ** 0.5)).replace(0, float("nan"))
+    best = cosine.drop(pid).dropna().sort_values(ascending=False).head(n)
+    out = []
+    for other, score in best.items():
+        pl = lg.players.get(other)
+        out.append({"id": int(other), "player": pl, "name": pl.name if pl else str(other),
+                    "team": lg.teams[pl.team_id]["abbreviation"] if pl and pl.team_id else "", "match": float(score)})
+    return season, out

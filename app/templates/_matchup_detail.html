@@ -1,5 +1,5 @@
 {# Matchup popup body, loaded into <dialog id="matchup-dialog">. #}
-{% macro who(pl, pid, name) %}<a href="/player/{{ pid }}">{{ name }}</a>{% if pl and pl.team_id %} <small class="muted">{{ lg.teams[pl.team_id].abbreviation }}</small>{% endif %}{% endmacro %}
+{% macro who(pl, pid, name) %}<a href="/players/{{ pid }}">{{ name }}</a>{% if pl and pl.team_id %} <small class="muted">{{ lg.teams[pl.team_id].abbreviation }}</small>{% endif %}{% endmacro %}
 {% macro size(pl) %}{% if pl and pl.height %}{{ (pl.height // 12)|int }}′{{ (pl.height % 12)|int }}″{% endif %}{% if pl and pl.position %} · {{ pl.position }}{% endif %}{% endmacro %}
 <div class="md-head">
   <div>

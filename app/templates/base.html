@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}NBA{% endblock %}</title>
+  <!-- Inside the game popup (an iframe on the Today page): hide the header and nav. -->
+  <script>if (window.self !== window.top) document.documentElement.classList.add("embedded");</script>
   <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
   {% block head %}{% endblock %}
 </head>
@@ -29,7 +31,8 @@
 
     <nav class="page-nav" aria-label="Pages">
       {% for href, label, also in nav %}
-      {% set here = request.url.path == href or (href != "/" and request.url.path.startswith(href)) or (also and request.url.path.startswith(also)) %}
+      {% if nav_here is defined and nav_here %}{% set here = href == nav_here %}
+      {% else %}{% set here = request.url.path == href or (href != "/" and request.url.path.startswith(href)) or (also and request.url.path.startswith(also)) %}{% endif %}
       <a href="{{ href }}" {% if here %}aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
     </nav>

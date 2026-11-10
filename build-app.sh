@@ -31,6 +31,7 @@ echo "Building ${APP_NAME}…"
   --add-data "$PWD/app/static:app/static" \
   --collect-submodules uvicorn \
   --collect-submodules nba_api \
+  --collect-submodules zeroconf \
   --distpath dist --workpath build/pyinstaller --specpath build \
   desktop.py
 
@@ -39,8 +40,16 @@ PLIST="$APP/Contents/Info.plist"
 for key in CFBundleShortVersionString CFBundleVersion; do
   /usr/libexec/PlistBuddy -c "Set :$key $VERSION" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :$key string $VERSION" "$PLIST"
 done
-# Ad hoc signature: enough for an app built and run on this Mac.
-codesign --force --deep --sign - "$APP"
+# The phone finds this Mac with Bonjour and connects over the local network.
+/usr/libexec/PlistBuddy -c "Delete :NSBonjourServices" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy \
+  -c "Add :NSLocalNetworkUsageDescription string NBA Stats lets the NBA Stats app on your phone copy its data over Wi-Fi." \
+  -c "Add :NSBonjourServices array" -c "Add :NSBonjourServices:0 string _nbastats._tcp" "$PLIST"
+# A fixed signing identity (a self-signed certificate in your keychain), so macOS keeps the app's
+# local network and firewall permissions across rebuilds. Ad hoc signatures lose them each build.
+build_tools/make_signing_identity.sh >/dev/null
+codesign --force --deep --sign "NBA Stats Signing" "$APP"
 codesign --verify --deep --strict "$APP"
 echo "Built $APP (version $VERSION)"
 

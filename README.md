@@ -43,7 +43,13 @@ The first page load downloads about 70 files from stats.nba.com (one to two minu
   for both teams. Tick **Out** next to any player to see the prediction without him (this page only), then
   **Save as unavailable for all games** to keep it. **Matchups** lists each side's top 5 scorers with their likely
   defender; pick a different defender to see how the prediction changes. Finished games also show the actual box score.
-- **Player:** bio, a playstyle summary, a **shot chart** (any season of his career since 1996-97, or his whole
+- **Players:** every rostered player in a table that sorts and filters (team, position, minutes, name) by points,
+  impact, matchup defense, true shooting, usage and more; a search for any player, current or retired; and
+  **Compare** (`/players/compare`): two players side by side (numbers with the better one highlighted, playstyle,
+  head-to-head matchups, points per game by age, shot charts). Every player link in the app opens his card here.
+- **Player** (`/players/<id>`; old `/player/<id>` links redirect): bio, a playstyle summary, **Plays like** (the
+  players whose game looks most similar: shot locations, usage, playmaking, efficiency, rebounding, blocks and steals,
+  compared in standard deviations across rotation players), a **shot chart** (any season of his career since 1996-97, or his whole
   career combined), **matchups** (who guarded him and how he scored; who he guarded and how they scored), estimated
   impact, the team's record with and without him, teams played for, career stats, playoffs and the last 10 games.
   **Against** picks one opponent for both the shot chart and the matchups; the matchups then list that team's whole
@@ -66,7 +72,7 @@ The first page load downloads about 70 files from stats.nba.com (one to two minu
   points before the season, narrowing to ±1.5 as games are played). Games not scheduled yet (NBA Cup knockouts and
   the games added later for teams knocked out of the Cup) are played against a league-average opponent.
 - **Trade machine:** move players between two teams and compare ratings, rotation minutes, projected records and
-  playoff and title odds before and after. Traded players count in full against each team's pre-trade rotation,
+  playoff and title odds before and after. Traded players count against each team's pre-trade rotation,
   like marking a player out. No salary-cap check (the stats API has no contract data).
 
 ### Shot charts
@@ -109,8 +115,11 @@ All in `app/model.py`:
 3. **Minutes:** the 10 players with the most usual minutes play. If they add up to more than 240, the end of the
    bench loses minutes first. Players marked out free up minutes for the rest.
 4. **Lineups:** a team's rating moves by each player's impact × the change in his share of court time.
-   Roster and minutes changes since the rated season count at 35% (a full-strength roster is optimistic).
-   Players marked out count in full.
+   Roster and minutes changes since last season count at 35% (a full-strength roster is optimistic); this
+   season's (mostly players who've missed games, already in the team's results) at 80%. Players marked out, or
+   listed out on the NBA injury report, count at 50% of their estimated impact. Both were fitted on every 2025-26
+   game predicted from what was known before it (`tools/fit_absences.py`): the old rule (100% out, 35% back)
+   predicted worse than ignoring absences.
 5. **Score:** pace × each offence against the other defence, plus home court (+1.7, last season's average)
    and −1.5 points for the second night of a back-to-back. Win chance assumes real margins vary ±13 points
    around the prediction.

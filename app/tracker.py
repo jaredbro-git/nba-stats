@@ -1,13 +1,16 @@
 """Prediction tracker: saves each game's prediction before tip-off and scores it once the game is final.
 
-While the app is open, every game starting within LOG_AHEAD_HOURS gets a prediction, refreshed on
-each update until the game starts, so the saved one is the last made before tip-off. Games the app
+While the app is open, every game starting within LOG_AHEAD_HOURS (a week) gets a prediction,
+redone on each update until the game starts, so the saved one is the last made before tip-off. Updates
+run in the background every few minutes and straight after each data refresh, so once a game's result
+is in, the team's next games that week are re-predicted with it. Games the app
 wasn't open for beforehand are left out (shown as "not tracked"), never predicted after the fact,
 with one exception: preseason games already played when the tracker was added are "backfilled" with
 a prediction made afterwards, which is fair only because no regular-season games had been added to
 the model's data since. They're labelled and can be left out of the scores.
 
-Predictions use the saved list of unavailable players at the time, like the rest of the app.
+Predictions use who's out at the time (availability.out_for_game: the game's own list, else the
+all-games list), like the rest of the app.
 Stored in predictions.json in the data folder.
 """
 
@@ -18,7 +21,11 @@ from datetime import datetime, timedelta, timezone
 
 from . import config
 
-LOG_AHEAD_HOURS = 48
+LOG_AHEAD_HOURS = 7 * 24
+HOW_TRACKED = ("Predictions are saved for games starting in the next 7 days and redone until tip-off, including after each "
+               "new result and injury report, by NBA Stats on the Mac while it's awake and by the iPhone app (which sends its "
+               "picks to the Mac when they copy). The pick saved nearest tip-off is the one that counts. Games neither saw in the "
+               "week before aren't tracked: they're never predicted after the fact.")
 MIN_INTERVAL = 600          # seconds between updates triggered by page loads
 KINDS = {"001": "pre", "002": "reg", "004": "post", "005": "post", "006": "post"}
 KIND_LABELS = {"reg": "Regular season", "pre": "Preseason", "post": "Playoffs"}
@@ -46,7 +53,8 @@ def _save(records: dict[str, dict]) -> None:
     tmp.replace(_file())
 
 
-def update(lg, out: set[int], force: bool = False) -> None:
+def update(lg, out_for, force: bool = False) -> None:
+    """out_for(game_id, home, away) -> the players out for that game."""
     """Log predictions for games starting soon and record results for finished ones."""
     global _last_update
     if not force and time.time() - _last_update < MIN_INTERVAL:
@@ -73,12 +81,13 @@ def update(lg, out: set[int], force: bool = False) -> None:
             upcoming = g.gameStatus == 1 and now < start <= now + timedelta(hours=LOG_AHEAD_HOURS)
             backfill = g.gameStatus == 3 and rec is None and kind == "pre" and not season_started
             if upcoming or backfill:
-                p = lg.predict(home, away, out & _rosters(lg, home, away), g.us_date, bool(g.isNeutral))
+                out = out_for(g.gameId, home, away)
+                p = lg.predict(home, away, out, g.us_date, bool(g.isNeutral))
                 rec = {
                     "game_id": g.gameId, "kind": kind, "start": start.isoformat(), "home": int(home), "away": int(away),
                     "home_pts": round(p["home"]["pts"], 1), "away_pts": round(p["away"]["pts"], 1),
                     "home_win": round(p["home_win"], 4), "logged_at": now.isoformat(), "backfilled": backfill,
-                    "out": sorted(out & _rosters(lg, home, away)),
+                    "out": sorted(out),
                 }
                 records[g.gameId] = rec
                 changed = True
@@ -91,8 +100,35 @@ def update(lg, out: set[int], force: bool = False) -> None:
         _lock.release()
 
 
-def _rosters(lg, *team_ids) -> set[int]:
-    return {p.id for p in lg.players.values() if p.team_id in team_ids}
+
+PHONE_FIELDS = ("game_id", "kind", "start", "home", "away", "home_pts", "away_pts", "home_win", "logged_at")
+
+
+def merge_phone(picks: list[dict]) -> int:
+    """Picks the iPhone saved itself (while this Mac was asleep). Each one replaces this Mac's pick for the game
+    when it was saved later, but still before tip-off: the pick nearest tip-off is the one that counts.
+    Returns how many were taken."""
+    with _lock:
+        records, taken = load(), 0
+        for p in picks:
+            try:
+                gid, start, logged = str(p["game_id"]), datetime.fromisoformat(p["start"]), datetime.fromisoformat(p["logged_at"])
+                rec = {k: p[k] for k in PHONE_FIELDS}
+                rec.update(home=int(p["home"]), away=int(p["away"]), home_pts=round(float(p["home_pts"]), 1),
+                           away_pts=round(float(p["away_pts"]), 1), home_win=round(float(p["home_win"]), 4))
+            except (KeyError, TypeError, ValueError):
+                continue
+            old = records.get(gid)
+            if logged >= start or (old and datetime.fromisoformat(old["logged_at"]) >= logged):
+                continue
+            rec.update(backfilled=False, out=sorted(int(i) for i in p.get("out", [])), source="iphone")
+            if old and "result" in old:
+                rec["result"] = old["result"]
+            records[gid] = rec
+            taken += 1
+        if taken:
+            _save(records)
+        return taken
 
 
 def summary(records: list[dict]) -> dict:
@@ -131,7 +167,9 @@ def rows(records: list[dict], lg) -> list[dict]:
     for r in records:
         row = dict(r)
         row["start_local"] = datetime.fromisoformat(r["start"]).astimezone(config.TZ)
+        row["logged_local"] = datetime.fromisoformat(r["logged_at"]).astimezone(config.TZ)
         row["home_team"], row["away_team"] = lg.teams.get(r["home"]), lg.teams.get(r["away"])
+        row["locked"] = row["start_local"] <= datetime.now(config.TZ)   # started: no more updates, this is the pick that's scored
         if "result" in r:
             actual = r["result"]["home"] - r["result"]["away"]
             row["correct"] = (r["home_win"] >= 0.5) == (actual > 0)

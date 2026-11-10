@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_injury.html" import injury_badge, injury_line %}
 {% from "_shotchart.html" import shot_chart with context %}
 {% block title %}{{ team.full_name }} · NBA{% endblock %}
 {% block content %}
@@ -36,12 +37,14 @@
         <thead><tr><th>Date (NZ)</th><th>Opponent</th><th class="num">Win chance</th><th class="num">Expected score</th></tr></thead>
         <tbody>
         {% for g in upcoming %}
-        <tr class="clickable" data-href="/game/{{ g.game_id }}">
+        <tr class="clickable" data-href="/game/{{ g.game_id }}?from={{ team.abbreviation }}">
           <td>{{ g.start.strftime("%a %-d %b") }}<br><small class="muted">{{ g.start.strftime("%-I:%M %p") }}{% if g.live %} · <b class="warn">Live</b>{% endif %}</small></td>
           <td>
-            <a href="/game/{{ g.game_id }}" class="opp">{{ "vs" if g.home else "@" }} <img src="{{ logo(g.opp.id) }}" alt="" class="logo-sm" loading="lazy"> {{ g.opp.nickname }}</a>
+            <a href="/game/{{ g.game_id }}?from={{ team.abbreviation }}" class="opp">{{ "vs" if g.home else "@" }} <img src="{{ logo(g.opp.id) }}" alt="" class="logo-sm" loading="lazy"> {{ g.opp.nickname }}</a>
             {% if g.label %}<br><small class="muted">{{ g.label }}</small>{% endif %}
             {% if g.b2b %}<br><small class="warn">Back-to-back</small>{% endif %}
+            {% if g.out_names %}<br><small class="muted">Out: {{ g.out_names|join(", ") }}{% if g.own_list %} · set for this game{% endif %}</small>
+            {% elif g.own_list %}<br><small class="muted">Everyone available (set for this game)</small>{% endif %}
           </td>
           <td class="num"><span class="winbar" style="--w: {{ (100 * g.win)|round(1) }}%"></span> <b class="{{ 'good' if g.win >= 0.5 else 'bad' }}">{{ g.win|pct }}</b></td>
           <td class="num">{{ g.pts|round|int }}–{{ g.opp_pts|round|int }}</td>
@@ -59,9 +62,9 @@
         <thead><tr><th>Date (NZ)</th><th>Opponent</th><th class="num">Result</th></tr></thead>
         <tbody>
         {% for g in results %}
-        <tr class="clickable" data-href="/game/{{ g.game_id }}">
+        <tr class="clickable" data-href="/game/{{ g.game_id }}?from={{ team.abbreviation }}">
           <td>{{ g.start.strftime("%a %-d %b") }}</td>
-          <td><a href="/game/{{ g.game_id }}" class="opp">{{ "vs" if g.home else "@" }} <img src="{{ logo(g.opp.id) }}" alt="" class="logo-sm" loading="lazy"> {{ g.opp.nickname }}</a></td>
+          <td><a href="/game/{{ g.game_id }}?from={{ team.abbreviation }}" class="opp">{{ "vs" if g.home else "@" }} <img src="{{ logo(g.opp.id) }}" alt="" class="logo-sm" loading="lazy"> {{ g.opp.nickname }}</a></td>
           <td class="num"><b class="{{ 'good' if g.won else 'bad' }}">{{ "W" if g.won else "L" }}</b> {{ g.pts }}–{{ g.opp_pts }}</td>
         </tr>
         {% endfor %}
@@ -75,30 +78,31 @@
   <section class="card">
     <h2>Roster</h2>
     <p class="muted small-print">Per-game stats are from this season once played, otherwise last season. Impact is the estimated change in net rating per 100 possessions with the player on court.
-      Mark a player unavailable to take him out of every prediction until you mark him available again.</p>
+      Tick <b>Out</b> for any players who'll miss games, then save them all at once: they're out of every prediction until you
+      untick them. To set who's out for one game only, open that game.
+      Players the NBA injury report lists as <b>Out</b> are left out of the ratings and predictions automatically (no need to tick them) until a later report clears them.</p>
+    {{ injury_line(injury_status, "/team/" ~ team.abbreviation) }}
+    <form id="out-form" method="post" action="/unavailable/save">
+      <input type="hidden" name="team_ids" value="{{ team.id }}">
+      <input type="hidden" name="out" value="">
+      <input type="hidden" name="back" value="/team/{{ team.abbreviation }}">
+    </form>
     <div class="table-wrap">
     <table class="roster">
-      <thead><tr><th>Player</th><th class="num">Exp. min</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">Impact</th><th></th></tr></thead>
+      <thead><tr><th>Out</th><th>Player</th><th class="num">Exp. min</th><th class="num">PTS</th><th class="num">REB</th><th class="num">AST</th><th class="num">Impact</th></tr></thead>
       <tbody>
       {% for p in roster %}
       {% set season = lg.cur if p.per_game.get(lg.cur) else lg.prev %}
       {% set pg = p.per_game.get(season) %}
       {% set is_out = p.id in saved_out %}
       <tr class="{{ 'is-out' if is_out }}">
-        <td><a href="/player/{{ p.id }}">{{ p.name }}</a><br><small class="muted">{{ p.position or "–" }}{% if p.number %} · #{{ p.number }}{% endif %}{% if not pg %} · no NBA stats yet{% elif season != lg.cur %} · {{ season }}{% endif %}</small></td>
+        <td class="out-cell"><input type="checkbox" class="out-toggle" value="{{ p.id }}" {% if is_out %}checked{% endif %} aria-label="{{ p.name }} out"></td>
+        <td><a href="/players/{{ p.id }}">{{ p.name }}</a> {{ injury_badge(injury.get(p.id)) }}<br><small class="muted">{{ p.position or "–" }}{% if p.number %} · #{{ p.number }}{% endif %}{% if not pg %} · no NBA stats yet{% elif season != lg.cur %} · {{ season }}{% endif %}</small></td>
         <td class="num">{% if minutes.get(p.id) %}{{ minutes[p.id]|round|int }}{% else %}–{% endif %}</td>
         <td class="num">{{ "%.1f"|format(pg.PTS) if pg else "–" }}</td>
         <td class="num">{{ "%.1f"|format(pg.REB) if pg else "–" }}</td>
         <td class="num">{{ "%.1f"|format(pg.AST) if pg else "–" }}</td>
         <td class="num {{ 'good' if p.impact > 0.5 else 'bad' if p.impact < -0.5 }}">{{ p.impact|signed }}</td>
-        <td>
-          <form method="post" action="/unavailable">
-            <input type="hidden" name="player_id" value="{{ p.id }}">
-            <input type="hidden" name="out" value="{{ 'false' if is_out else 'true' }}">
-            <input type="hidden" name="back" value="/team/{{ team.abbreviation }}">
-            <button type="submit" class="secondary small" aria-pressed="{{ 'true' if is_out else 'false' }}">{{ "Out" if is_out else "Mark out" }}</button>
-          </form>
-        </td>
       </tr>
       {% endfor %}
       </tbody>
@@ -138,4 +142,13 @@
   {% endif %}
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/app.js?v={{ asset_version }}"></script>{% endblock %}
+{% block scripts %}
+<div id="out-dock" class="out-dock" hidden>
+  <span data-dock-text></span>
+  <button type="submit" form="out-form" data-save>Save for all games</button>
+  <button type="button" class="link-button" data-undo>Undo</button>
+</div>
+<script src="/static/app.js?v={{ asset_version }}"></script>
+{% set team_out = roster|map(attribute="id")|select("in", saved_out)|list %}
+<script>initOutDock({{ team_out|tojson }}, {{ team_out|tojson }}, false);</script>
+{% endblock %}

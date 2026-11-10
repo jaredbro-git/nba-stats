@@ -1,13 +1,17 @@
 """Keeps the local cache up to date, in a background thread so pages never wait on stats.nba.com.
 
 The previous season is downloaded once. Current-season data (schedule, results, rosters,
-on/off splits) is re-downloaded when it's older than config.REFRESH_HOURS.
+on/off splits) is re-downloaded when it's older than config.REFRESH_HOURS, and also soon after
+each regular-season game should have finished (see results_due), so results and the predictions
+for the next games catch up within the hour.
 """
 
 import threading
+from datetime import timedelta
 import traceback
 from datetime import datetime
 
+import pandas as pd
 from nba_api.stats.static import teams as static_teams
 
 from . import config, nba
@@ -24,6 +28,12 @@ def history_seasons() -> list[str]:
     return [config.season_label(y) for y in range(first, prev + 1)]
 
 
+def _older_impact_seasons() -> list[str]:
+    from .model import IMPACT_SEASONS
+    start = int(config.previous_season()[:4])
+    return [config.season_label(start - back) for back in range(1, IMPACT_SEASONS - 1)]
+
+
 def _jobs(force: bool):
     cur, prev = config.current_season(), config.previous_season()
     fresh = 0 if force else config.REFRESH_HOURS
@@ -34,6 +44,8 @@ def _jobs(force: bool):
         lambda: nba.shot_zones(prev, None),
         *[(lambda t=t: nba.on_off(t, prev, None)) for t in TEAM_IDS],
         *[(lambda s=s: nba.matchups(s, None)) for s in history_seasons()],
+        # Older on/off splits for player impact (model.IMPACT_SEASONS), downloaded once.
+        *[(lambda t=t, s=s: nba.on_off(t, s, None)) for s in _older_impact_seasons() for t in TEAM_IDS],
         lambda: nba.closest_defender(prev, None),
         lambda: nba.closest_defender(prev, None, "3 Pointers"),
         lambda: nba.schedule(cur, fresh),
@@ -78,22 +90,52 @@ def _run(force: bool):
 def needs_refresh() -> bool:
     cur, prev = config.current_season(), config.previous_season()
     # Data added in later versions of the app (matchup history, defense) is fetched on the next refresh.
-    needed = [f"matchups_{s}" for s in history_seasons()] + [f"defend_{prev}", f"defend3_{prev}"]
+    needed = [f"matchups_{s}" for s in history_seasons()] + [f"defend_{prev}", f"defend3_{prev}"] \
+        + [f"onoff_{t}_{s}" for s in _older_impact_seasons() for t in TEAM_IDS]
     if not all(nba.cached_at(k) for k in needed):
         return True
     return not nba.is_fresh(f"gamelog_T_{cur}", config.REFRESH_HOURS) or not nba.is_fresh(f"schedule_{cur}", config.REFRESH_HOURS)
 
 
+GAME_HOURS = 3          # a game is usually over this long after tip-off
+RESULTS_RETRY_MINUTES = 30
+RESULTS_LOOKBACK_DAYS = 2   # stop waiting on a game this old (postponed, or never logged)
+
+
+def results_due() -> bool:
+    """A regular-season game should be over by now but isn't in the downloaded results yet.
+    Checked at most every RESULTS_RETRY_MINUTES, since stats.nba.com can take a while to post a game."""
+    cur = config.current_season()
+    fetched = nba.cached_at(f"gamelog_T_{cur}")
+    schedule, logs = nba.load(f"schedule_{cur}"), nba.load(f"gamelog_T_{cur}")
+    if fetched is None or not schedule or logs is None:
+        return False
+    now = pd.Timestamp.now(tz="UTC")
+    if now - fetched < timedelta(minutes=RESULTS_RETRY_MINUTES):
+        return False
+    games = schedule[0]
+    start = pd.to_datetime(games["gameDateTimeUTC"], utc=True, errors="coerce")
+    over = (games["gameId"].str[:3] == "002") & (start + timedelta(hours=GAME_HOURS) <= now) \
+        & (start > now - timedelta(days=RESULTS_LOOKBACK_DAYS))
+    logged = set(logs[0]["GAME_ID"]) if len(logs[0]) else set()
+    return bool((over & ~games["gameId"].isin(logged)).any())
+
+
 def start(force: bool = False) -> None:
-    """Start a background refresh if one isn't already running and the data is stale (or force)."""
+    """Start a background refresh if one isn't already running and the data is stale, a game's
+    results are due, or force (the Refresh button)."""
     with _lock:
-        if _state["running"] or not (force or needs_refresh()):
+        if _state["running"]:
+            return
+        due = results_due()
+        if not (force or due or needs_refresh()):
             return
         # A failed sync waits a few minutes before trying again automatically.
         if not force and _state["error"] and _state["finished_at"] and (datetime.now(config.TZ) - _state["finished_at"]).total_seconds() < 300:
             return
         _state.update(running=True, done=0, total=0)
-        threading.Thread(target=_run, args=(force,), daemon=True).start()
+        # Results due: re-download this season's data even though it isn't REFRESH_HOURS old yet.
+        threading.Thread(target=_run, args=(force or due,), daemon=True).start()
 
 
 def has_core_data() -> bool:

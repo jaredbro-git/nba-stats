@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% from "_playersearch.html" import player_search %}
+{% block title %}Players · NBA{% endblock %}
+{% block content %}
+<div class="section-head">
+  <div>
+    <h1 class="page-title">Players</h1>
+    <p class="muted">Every player on an NBA roster. Click a player for his card: shot charts, matchups, playstyle and career.</p>
+  </div>
+</div>
+
+<div class="grid">
+  <section class="card">
+    <h2>Find a player</h2>
+    {{ player_search("Player", "Any player, current or retired", slot="go") }}
+  </section>
+  <section class="card">
+    <h2>Compare two players</h2>
+    <div class="pair-search compare-pair">
+      {{ player_search("Player", "e.g. Shai Gilgeous-Alexander", slot="a") }}
+      <span class="at">vs</span>
+      {{ player_search("Player", "e.g. Luka Dončić", slot="b") }}
+      <button type="button" id="compare-go" disabled>Compare</button>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="mu-controls" data-for="players-table">
+    <label>Sort by
+      <select data-sort-preset>
+        <option value="pts:desc">Points</option>
+        <option value="impact:desc">Impact (best first)</option>
+        <option value="impact_off:desc">Offensive impact</option>
+        <option value="impact_def:desc">Defensive impact</option>
+        <option value="def_rating:asc">Matchup defense (best first)</option>
+        <option value="ts:desc">True shooting %</option>
+        <option value="usg:desc">Usage</option>
+        <option value="ast:desc">Assists</option>
+        <option value="reb:desc">Rebounds</option>
+        <option value="mpg:desc">Minutes</option>
+        <option value="age:asc">Youngest</option>
+        <option value="name:asc">Name</option>
+      </select>
+    </label>
+    <label>Team
+      <select data-filter="team"><option value="">All teams</option>{% for t in teams_sorted %}<option value="{{ t.abbreviation }}">{{ t.full_name }}</option>{% endfor %}</select>
+    </label>
+    <label>Position
+      <select data-filter="group"><option value="">All</option><option value="guard">Guards</option><option value="wing">Wings</option><option value="big">Bigs</option></select>
+    </label>
+    <label>Min. minutes
+      <select data-filter-min="mpg"><option value="0">Any</option><option value="10">10+</option><option value="20" selected>20+</option><option value="28">28+</option></select>
+    </label>
+    <label>Name<input type="search" data-filter-text="name" placeholder="Filter"></label>
+    <span class="mu-count muted" aria-live="polite"></span>
+  </div>
+  <div class="table-wrap">
+  <table class="matchups players-table" id="players-table" data-sortable data-page="50" data-sort="pts:desc" data-tiebreak="mpg">
+    <thead><tr>
+      <th><button type="button" data-sort="name">Player</button></th>
+      <th><button type="button" data-sort="team">Team</button></th>
+      <th class="num"><button type="button" data-sort="age" data-sort-asc>Age</button></th>
+      <th class="num"><button type="button" data-sort="mpg">MIN</button></th>
+      <th class="num"><button type="button" data-sort="pts">PTS</button></th>
+      <th class="num"><button type="button" data-sort="reb">REB</button></th>
+      <th class="num"><button type="button" data-sort="ast">AST</button></th>
+      <th class="num"><button type="button" data-sort="ts">TS%</button></th>
+      <th class="num"><button type="button" data-sort="usg">USG%</button></th>
+      <th class="num"><button type="button" data-sort="impact" title="Estimated net points per 100 possessions with him on court">Impact</button></th>
+      <th class="num"><button type="button" data-sort="impact_off">Off.</button></th>
+      <th class="num"><button type="button" data-sort="impact_def">Def.</button></th>
+      <th class="num"><button type="button" data-sort="def_rating" data-sort-asc title="Points per 100 possessions his matchups score vs usual (negative is better)">Matchup D</button></th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr class="clickable" data-href="/players/{{ r.id }}"
+        data-name="{{ r.name }}" data-team="{{ r.team.abbreviation if r.team else '' }}" data-group="{{ r.group }}"
+        data-age="{{ r.age if r.age is not none else '' }}" data-mpg="{{ r.mpg if r.mpg is not none else '' }}"
+        data-pts="{{ r.PTS if r.PTS is not none else '' }}" data-reb="{{ r.REB if r.REB is not none else '' }}" data-ast="{{ r.AST if r.AST is not none else '' }}"
+        data-ts="{{ r.ts if r.ts is not none else '' }}" data-usg="{{ r.usg if r.usg is not none else '' }}"
+        data-impact="{{ r.impact }}" data-impact_off="{{ r.impact_off }}" data-impact_def="{{ r.impact_def }}"
+        data-def_rating="{{ r.def_rating if r.def_rating is not none else '' }}">
+      <td><a href="/players/{{ r.id }}">{{ r.name }}</a> <small class="muted">{{ r.position }}</small>{% if r.season and r.season != lg.cur %} <small class="muted">· {{ r.season }}</small>{% endif %}</td>
+      <td>{% if r.team %}<span class="team-inline"><img src="{{ logo(r.team.id) }}" alt="" class="logo-sm">{{ r.team.abbreviation }}</span>{% endif %}</td>
+      <td class="num">{{ r.age|int if r.age else "–" }}</td>
+      <td class="num">{{ "%.1f"|format(r.mpg) if r.mpg is not none else "–" }}</td>
+      <td class="num"><b>{{ "%.1f"|format(r.PTS) if r.PTS is not none else "–" }}</b></td>
+      <td class="num">{{ "%.1f"|format(r.REB) if r.REB is not none else "–" }}</td>
+      <td class="num">{{ "%.1f"|format(r.AST) if r.AST is not none else "–" }}</td>
+      <td class="num">{{ r.ts|pct(1) if r.ts is not none else "–" }}</td>
+      <td class="num">{{ r.usg|pct(1) if r.usg is not none else "–" }}</td>
+      <td class="num {{ 'good' if r.impact > 0.5 else 'bad' if r.impact < -0.5 }}">{{ r.impact|signed }}</td>
+      <td class="num">{{ r.impact_off|signed }}</td>
+      <td class="num">{{ r.impact_def|signed }}</td>
+      <td class="num {{ 'good' if r.def_rating is not none and r.def_rating < -0.5 else 'bad' if r.def_rating is not none and r.def_rating > 0.5 }}">{{ r.def_rating|signed if r.def_rating is not none else "–" }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <button type="button" class="secondary small mu-more" data-more-for="players-table" hidden>Show more</button>
+  <p class="muted small-print">Per-game stats are this season once he's played, otherwise last season. Impact: estimated points per 100 possessions
+    his team gains with him on court (offence and defence). Matchup D: points per 100 possessions his matchups score compared with
+    their usual rate (negative is better), mostly from FG% allowed as the closest defender.</p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/app.js?v={{ asset_version }}"></script>
+<script>
+  const picked = {};
+  const go = document.getElementById("compare-go");
+  window.onSlotPicked = (slot, p) => { picked[slot] = p.id; go.disabled = !(picked.a && picked.b); };
+  go.addEventListener("click", () => { window.location.href = `/players/compare?a=${picked.a}&b=${picked.b}`; });
+</script>
+{% endblock %}

@@ -5,3 +5,5 @@ pandas
 jinja2
 tzdata
 python-multipart
+zeroconf
+pypdf

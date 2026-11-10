@@ -50,8 +50,9 @@ def series_win(p_home: np.ndarray, p_away: np.ndarray) -> np.ndarray:
     return won
 
 
-def run(lg: model.League, missing: dict[int, int | None], seed: int = 7) -> dict:
-    """missing: player id -> games he misses from now (None = rest of season, playoffs included)."""
+def run(lg: model.League, missing: dict[int, int | None], seed: int = 7, game_outs: dict[str, set[int]] | None = None) -> dict:
+    """missing: player id -> games he misses from now (None = rest of season, playoffs included).
+    game_outs: games with their own list of who's out (availability.game_outs), used as-is for those games."""
     rng = np.random.default_rng(seed)
     teams = sorted(lg.teams)
     index = {t: i for i, t in enumerate(teams)}
@@ -71,6 +72,8 @@ def run(lg: model.League, missing: dict[int, int | None], seed: int = 7) -> dict
             pl = lg.players.get(pid)
             if pl and pl.team_id in (h, a) and (count is None or played_so_far[pl.team_id] < count):
                 out.add(pid)
+        if game_outs and g.gameId in game_outs:
+            out = {pid for pid in game_outs[g.gameId] if lg.players.get(pid) and lg.players[pid].team_id in (h, a)}
         M.append(lg.quick_margin(h, a, out, g.us_date, bool(g.isNeutral)))
         H.append(index[h])
         A.append(index[a])
